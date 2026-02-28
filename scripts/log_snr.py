@@ -5,8 +5,9 @@ log_snr.py — Log per-satellite C/N0 from both F9T receivers to CSV.
 Usage:
     python scripts/log_snr.py [--config config/local.toml] [--out data/snr.csv]
 
-The script reads UBX-NAV-SAT messages from both receivers concurrently
-(one thread each) and writes every snapshot to the CSV log.
+Reads NMEA GSV sentences (already output by the F9T by default) from both
+receivers concurrently and writes one combined snapshot per epoch to CSV.
+Also handles UBX-NAV-SAT if the receiver is configured to output it.
 
 Stop with Ctrl-C.
 """
@@ -17,18 +18,15 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Allow running from repo root without installing the package
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 try:
-    import tomllib                   # Python 3.11+
+    import tomllib
 except ImportError:
-    import tomli as tomllib          # backport
-
-from pyubx2 import UBXMessage
+    import tomli as tomllib
 
 from testant.receiver import Receiver
-from testant.snr import snapshot_from_navsat
+from testant.snr import GsvAccumulator, snapshot_from_navsat
 from testant.logger import SnapshotLogger
 
 
@@ -37,30 +35,27 @@ def load_config(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def poll_navsat(receiver: Receiver) -> None:
-    """Send a UBX-NAV-SAT poll request to keep messages flowing."""
-    msg = UBXMessage("NAV", "NAV-SAT", 0)   # mode 0 = poll
-    receiver.send(msg)
-
-
 def reader_thread(cfg: dict, label: str, logger: SnapshotLogger, stop: threading.Event):
     port  = cfg["port"]
     baud  = cfg["baud"]
     label = cfg.get("label", label)
+    acc   = GsvAccumulator(label)
 
     with Receiver(port=port, baud=baud, label=label) as rx:
-        # Ask the receiver to start sending NAV-SAT every navigation epoch.
-        # (If the receiver is already configured via u-center this is optional.)
-        poll_navsat(rx)
-
         for _raw, msg in rx:
             if stop.is_set():
                 break
             identity = getattr(msg, "identity", "")
+
             if identity == "NAV-SAT":
                 ts   = datetime.now(tz=timezone.utc)
                 snap = snapshot_from_navsat(msg, label=label, timestamp=ts)
+            else:
+                snap = acc.feed(msg)
+
+            if snap is not None:
                 logger.write(snap)
+                ts = snap.timestamp
                 print(
                     f"[{ts.strftime('%H:%M:%S')}] {label:6s} "
                     f"sats={snap.count:2d} used={snap.used_count:2d} "

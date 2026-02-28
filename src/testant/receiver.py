@@ -7,7 +7,7 @@ complete message is available.
 """
 
 import serial
-from pyubx2 import UBXReader, ERR_IGNORE
+from pyubx2 import UBXReader
 
 
 class Receiver:
@@ -38,7 +38,7 @@ class Receiver:
     def open(self):
         self._ser = serial.Serial(self.port, self.baud, timeout=1)
         # protfilter=7  →  accept UBX + NMEA + RTCM3
-        self._reader = UBXReader(self._ser, protfilter=7, errhandler=ERR_IGNORE)
+        self._reader = UBXReader(self._ser, protfilter=7, quitonerror=0)
 
     def close(self):
         if self._ser and self._ser.is_open:

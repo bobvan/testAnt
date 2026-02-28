@@ -71,22 +71,86 @@ def snapshot_from_navsat(msg: Any, label: str, timestamp: datetime) -> SatSnapsh
     return snap
 
 
+_TALKER_GNSS = {"GP": "GPS", "GL": "GLO", "GA": "GAL", "GB": "BDS", "GQ": "QZSS"}
+
+
 def snapshot_from_gsv(sentences: list[Any], label: str, timestamp: datetime) -> SatSnapshot:
     """
     Build a SatSnapshot from a group of NMEA GSV sentences for one talker.
 
     sentences should be all GSV messages for one talker ID (e.g. $GPGSV)
-    collected within the same epoch.
+    collected within the same epoch.  Uses pynmeagps attribute naming:
+    svid_NN, elv_NN, az_NN, cno_NN (slots 01-04).
     """
     snap = SatSnapshot(timestamp=timestamp, receiver_label=label)
     for msg in sentences:
-        for slot in range(1, 5):
-            prn  = getattr(msg, f"sv_prn_num_{slot}", None)
-            snr  = getattr(msg, f"snr_{slot}", None)
-            elev = getattr(msg, f"elevation_deg_{slot}", float("nan"))
-            azim = getattr(msg, f"azimuth_{slot}", float("nan"))
-            if prn is None:
+        talker   = getattr(msg, "_talker", "GN")
+        gnss_id  = _TALKER_GNSS.get(talker, talker)
+        for slot in ("01", "02", "03", "04"):
+            sv_id = getattr(msg, f"svid_{slot}", None)
+            cno   = getattr(msg, f"cno_{slot}",  None)
+            elev  = getattr(msg, f"elv_{slot}",  float("nan"))
+            azim  = getattr(msg, f"az_{slot}",   float("nan"))
+            if sv_id is None:
                 continue
-            cno = float(snr) if snr not in (None, "") else 0.0
-            snap.satellites.append(SatInfo("?", int(prn), cno, float(elev or 0), float(azim or 0)))
+            snap.satellites.append(SatInfo(
+                gnss_id, int(sv_id),
+                float(cno) if cno not in (None, "") else 0.0,
+                float(elev or 0), float(azim or 0),
+            ))
     return snap
+
+
+class GsvAccumulator:
+    """
+    Accumulate NMEA GSV sentences across all talkers and emit one combined
+    SatSnapshot per navigation epoch.
+
+    The F9T outputs a 1 Hz NMEA burst structured roughly as:
+        GGA  ← epoch anchor (start of burst)
+        GSA, GSV×N (all constellations)
+        RMC, VTG, GLL, ZDA
+        GGA  ← next epoch starts here
+
+    Strategy: buffer all GSV sentences; when the next GGA arrives, emit
+    the previous epoch's accumulated data as a single combined snapshot.
+    Feed ALL messages (not just GSV) so the accumulator can see the GGA.
+    """
+
+    _GGA_IDS = {"GNGGA", "GPGGA", "GAGGA", "GBGGA"}
+
+    def __init__(self, label: str):
+        self.label = label
+        self._buffer: list[Any] = []   # GSV sentences for the current epoch
+
+    def feed(self, msg: Any) -> SatSnapshot | None:
+        """
+        Feed one parsed message.  Returns a combined SatSnapshot at each
+        epoch boundary (GGA), otherwise returns None.
+        """
+        identity = getattr(msg, "identity", "")
+
+        if identity in self._GGA_IDS:
+            # Epoch boundary — emit whatever GSV data we buffered
+            if self._buffer:
+                return self._emit()
+            return None
+
+        if identity.endswith("GSV"):
+            self._buffer.append(msg)
+
+        return None
+
+    def flush(self) -> SatSnapshot | None:
+        """Emit whatever has been accumulated (call at end of stream)."""
+        return self._emit() if self._buffer else None
+
+    def _emit(self) -> SatSnapshot:
+        from datetime import datetime, timezone
+        ts   = datetime.now(tz=timezone.utc)
+        snap = SatSnapshot(timestamp=ts, receiver_label=self.label)
+        for msg in self._buffer:
+            partial = snapshot_from_gsv([msg], self.label, ts)
+            snap.satellites.extend(partial.satellites)
+        self._buffer.clear()
+        return snap
