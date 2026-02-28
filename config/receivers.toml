@@ -1,13 +1,21 @@
 # Receiver configuration for the two u-blox F9T units.
 # Copy to config/local.toml and adjust port paths before running.
 # local.toml is gitignored so machine-specific paths stay local.
+#
+# Both F9Ts enumerate as CDC ACM devices (/dev/ttyACM*).
+# Because they share the same USB VID:PID with no serial number,
+# port assignment depends on enumeration order — unplug order matters.
+# NOTE: gpsd is configured to hold /dev/ttyACM0. Either stop gpsd
+# before running our scripts, or point gpsd at only one device and
+# use the other port for direct UBX access.
+#   sudo systemctl stop gpsd gpsd.socket
 
 [receiver.A]
-port   = "/dev/ttyUSB0"
+port   = "/dev/ttyACM0"
 baud   = 115200
 label  = "REF"          # role: reference antenna
 
 [receiver.B]
-port   = "/dev/ttyUSB1"
+port   = "/dev/ttyACM1"
 baud   = 115200
 label  = "DUT"          # role: antenna under test
