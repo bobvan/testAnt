@@ -1,0 +1,15 @@
+# Serial communication
+pyserial>=3.5
+
+# u-blox UBX binary protocol + NMEA parsing (supports F9T)
+pyubx2>=1.2.40
+
+# Data handling and analysis
+pandas>=2.0
+numpy>=1.24
+
+# Plotting
+matplotlib>=3.7
+
+# TOML config (stdlib in Python 3.11+, backport for older)
+tomli>=2.0; python_version < "3.11"

@@ -1,0 +1,13 @@
+# Receiver configuration for the two u-blox F9T units.
+# Copy to config/local.toml and adjust port paths before running.
+# local.toml is gitignored so machine-specific paths stay local.
+
+[receiver.A]
+port   = "/dev/ttyUSB0"
+baud   = 115200
+label  = "REF"          # role: reference antenna
+
+[receiver.B]
+port   = "/dev/ttyUSB1"
+baud   = 115200
+label  = "DUT"          # role: antenna under test
