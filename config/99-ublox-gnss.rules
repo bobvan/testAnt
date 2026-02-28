@@ -1,0 +1,24 @@
+# Stable symlinks for the two u-blox F9T GNSS receivers.
+# Matched by physical USB port (ID_PATH), not by enumeration order,
+# so /dev/gnss-ref and /dev/gnss-dut are stable across reboots and replugs.
+#
+# xhci-hcd.1 / usb-0:2  →  REF antenna  (currently ttyACM0)
+# xhci-hcd.0 / usb-0:2  →  DUT antenna  (currently ttyACM1)
+#
+# To verify paths:  udevadm info /dev/ttyACM0 | grep ID_PATH
+
+SUBSYSTEM=="tty", \
+  ENV{ID_VENDOR_ID}=="1546", \
+  ENV{ID_MODEL_ID}=="01a9", \
+  ENV{ID_PATH}=="platform-xhci-hcd.1-usb-0:2:1.0", \
+  SYMLINK+="gnss-ref", \
+  MODE="0664", \
+  GROUP="dialout"
+
+SUBSYSTEM=="tty", \
+  ENV{ID_VENDOR_ID}=="1546", \
+  ENV{ID_MODEL_ID}=="01a9", \
+  ENV{ID_PATH}=="platform-xhci-hcd.0-usb-0:2:1.0", \
+  SYMLINK+="gnss-dut", \
+  MODE="0664", \
+  GROUP="dialout"

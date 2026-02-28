@@ -3,19 +3,19 @@
 # local.toml is gitignored so machine-specific paths stay local.
 #
 # Both F9Ts enumerate as CDC ACM devices (/dev/ttyACM*).
-# Because they share the same USB VID:PID with no serial number,
-# port assignment depends on enumeration order — unplug order matters.
-# NOTE: gpsd is configured to hold /dev/ttyACM0. Either stop gpsd
-# before running our scripts, or point gpsd at only one device and
-# use the other port for direct UBX access.
+# Stable symlinks are provided by /etc/udev/rules.d/99-ublox-gnss.rules,
+# which matches each receiver by physical USB port (ID_PATH) so that
+# /dev/gnss-ref and /dev/gnss-dut survive reboots and replugs.
+#
+# gpsd is configured to hold ttyACM0. Stop it before running our scripts:
 #   sudo systemctl stop gpsd gpsd.socket
 
 [receiver.A]
-port   = "/dev/ttyACM0"
+port   = "/dev/gnss-ref"
 baud   = 115200
 label  = "REF"          # role: reference antenna
 
 [receiver.B]
-port   = "/dev/ttyACM1"
+port   = "/dev/gnss-dut"
 baud   = 115200
 label  = "DUT"          # role: antenna under test
