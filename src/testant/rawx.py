@@ -23,7 +23,7 @@ class RawxMeas:
     carrier_phase: float  # cpMes, cycles
     doppler: float        # doMes, Hz
     cno: float            # carrier-to-noise density, dBHz
-    locktime_ms: int      # carrier phase lock time counter, ms
+    lock_duration_ms: int # PLL lock duration, ms (retrospective; resets on cycle slip)
     pr_valid: bool        # trkStat bit 0 — pseudorange valid
     cp_valid: bool        # trkStat bit 1 — carrier phase valid
     half_cyc: bool        # trkStat bit 2 — half-cycle resolved (1 = good; 0 = unknown)
@@ -98,7 +98,7 @@ def snapshot_from_rawx(
         cp          = float(getattr(msg, f"cpMes_{i:02d}", float("nan")))
         do          = float(getattr(msg, f"doMes_{i:02d}", float("nan")))
         cno         = float(getattr(msg, f"cno_{i:02d}", 0.0))
-        locktime    = int(getattr(msg, f"locktime_{i:02d}", 0))
+        lock_duration = int(getattr(msg, f"locktime_{i:02d}", 0))
         cp_valid    = bool(getattr(msg, f"cpValid_{i:02d}", 0))
         half_cyc    = bool(getattr(msg, f"halfCyc_{i:02d}", 0))
 
@@ -117,7 +117,7 @@ def snapshot_from_rawx(
             carrier_phase=cp,
             doppler=do,
             cno=cno,
-            locktime_ms=locktime,
+            lock_duration_ms=lock_duration,
             pr_valid=pr_valid,
             cp_valid=cp_valid,
             half_cyc=half_cyc,

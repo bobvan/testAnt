@@ -16,7 +16,7 @@ FIELDS = [
     "timestamp", "receiver", "antenna_mount",
     "gnss_id", "signal_id", "sv_id",
     "pseudorange_m", "carrier_phase_cy", "doppler_hz", "cno_dBHz",
-    "locktime_ms", "pr_valid", "cp_valid", "half_cyc",
+    "lock_duration_ms", "pr_valid", "cp_valid", "half_cyc",
 ]
 
 
@@ -53,7 +53,7 @@ class RawxLogger:
                 "carrier_phase_cy": f"{m.carrier_phase:.6f}",
                 "doppler_hz":      f"{m.doppler:.4f}",
                 "cno_dBHz":        f"{m.cno:.1f}",
-                "locktime_ms":     m.locktime_ms,
+                "lock_duration_ms": m.lock_duration_ms,
                 "pr_valid":        int(m.pr_valid),
                 "cp_valid":        int(m.cp_valid),
                 "half_cyc":        int(m.half_cyc),

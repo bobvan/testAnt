@@ -6,10 +6,10 @@ Usage:
     python scripts/analyze_rawx.py --csv data/foo_rawx.csv --out data/foo
 
 Outputs (all suffixed onto <out>):
-    _rawx_report.txt    — per-signal CMC std dev and lock time stats
-    _cmc_by_signal.png  — CMC time series per signal (receivers overlaid)
-    _cmc_diff.png       — CMC_A − CMC_B per signal (reveals receiver noise/bias)
-    _locktime.png       — carrier phase lock time CDF per signal
+    _rawx_report.txt      — per-signal CMC std dev and lock duration stats
+    _cmc_by_signal.png    — CMC time series per signal (receivers overlaid)
+    _cmc_diff.png         — CMC_A − CMC_B per signal (reveals receiver noise/bias)
+    _lock_duration.png    — carrier phase lock duration CDF per signal
 """
 
 import argparse
@@ -106,9 +106,9 @@ def write_report(df: pd.DataFrame, out_stem: Path) -> None:
           f"{row['mean']:>+9.3f}  {row['std']:>8.3f} m")
     a("")
 
-    a("── Lock time stats by signal & receiver (ms) ───────────────────")
+    a("── Lock duration stats by signal & receiver (ms) ───────────────")
     a(f"  {'Signal':16s}  {'Receiver':8s}  {'median_ms':>10s}  {'p95_ms':>8s}")
-    lt_stats = (df.groupby(["signal_id", "receiver"])["locktime_ms"]
+    lt_stats = (df.groupby(["signal_id", "receiver"])["lock_duration_ms"]
                   .agg(median="median", p95=lambda x: x.quantile(0.95))
                   .reset_index()
                   .sort_values(["signal_id", "receiver"]))
@@ -218,8 +218,8 @@ def plot_cmc_diff(df: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
-def plot_locktime(df: pd.DataFrame, out_stem: Path) -> None:
-    """Carrier phase lock time CDF per signal."""
+def plot_lock_duration(df: pd.DataFrame, out_stem: Path) -> None:
+    """Carrier phase lock duration CDF per signal."""
     signals = sorted(df["signal_id"].dropna().unique())
     if not signals:
         return
@@ -228,21 +228,21 @@ def plot_locktime(df: pd.DataFrame, out_stem: Path) -> None:
     colors = plt.cm.tab10.colors
 
     for color, sig in zip(colors, signals):
-        sub = df[df["signal_id"] == sig]["locktime_ms"].dropna()
+        sub = df[df["signal_id"] == sig]["lock_duration_ms"].dropna()
         if sub.empty:
             continue
         x = np.sort(sub.values)
         y = np.arange(1, len(x) + 1) / len(x)
         ax.plot(x, y, label=sig, linewidth=1.2, color=color)
 
-    ax.set_xlabel("Lock time (ms)")
+    ax.set_xlabel("Lock duration (ms)")
     ax.set_ylabel("CDF")
-    ax.set_title("Carrier phase lock time CDF by signal")
+    ax.set_title("Carrier phase lock duration CDF by signal")
     ax.set_xscale("log")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3, which="both")
     fig.tight_layout()
-    path = out_stem.parent / (out_stem.name + "_locktime.png")
+    path = out_stem.parent / (out_stem.name + "_lock_duration.png")
     fig.savefig(path, dpi=120)
     plt.close(fig)
     print(f"Plot    → {path}")
@@ -273,7 +273,7 @@ def main():
     write_report(df, out_stem)
     plot_cmc_by_signal(df, out_stem)
     plot_cmc_diff(df, out_stem)
-    plot_locktime(df, out_stem)
+    plot_lock_duration(df, out_stem)
     print("Done.")
 
 
