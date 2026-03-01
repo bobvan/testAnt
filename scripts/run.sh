@@ -1,24 +1,23 @@
 #!/usr/bin/env bash
-# run_cal.sh — Run one calibration session with a timestamped output file,
-#              then automatically analyze the results.
+# run.sh — Collect data for one run with a timestamped output file,
+#           then automatically analyze the results.
 #
 # Usage:
-#   scripts/run_cal.sh <run-config> <duration> [--bg]
+#   scripts/run.sh <run-config> <duration> [--bg]
 #
 # Arguments:
-#   run-config   path to a cal_*.toml or run.toml config file
+#   run-config   path to any *.toml run config file
 #   duration     timeout duration: 5m, 1h, 48h, etc. (passed to GNU timeout)
 #   --bg         run in the background via nohup (use for runs > ~10 minutes)
 #
 # Examples:
-#   scripts/run_cal.sh config/cal_s1-top_s2-bot.toml 5m
-#   scripts/run_cal.sh config/cal_s1-bot_s2-top.toml 5m
-#   scripts/run_cal.sh config/cal_s1-top_s2-bot.toml 1h --bg
+#   scripts/run.sh config/patch1-bot_patch2-top.toml 5m
+#   scripts/run.sh config/cal_s1-top_s2-bot.toml 1h --bg
 
 set -uo pipefail
 
-RUN_CONFIG="${1:?Usage: run_cal.sh <run-config> <duration> [--bg]}"
-DURATION="${2:?Usage: run_cal.sh <run-config> <duration> [--bg]}"
+RUN_CONFIG="${1:?Usage: run.sh <run-config> <duration> [--bg]}"
+DURATION="${2:?Usage: run.sh <run-config> <duration> [--bg]}"
 BG="${3:-}"
 
 # Derive output names from config key + timestamp
