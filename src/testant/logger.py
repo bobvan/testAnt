@@ -7,6 +7,7 @@ the file later with pandas for analysis and plotting.
 
 import csv
 import io
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +25,7 @@ class SnapshotLogger:
         self.path = path
         self._file: io.TextIOWrapper | None = None
         self._writer: csv.DictWriter | None = None
+        self._lock = threading.Lock()
 
     def __enter__(self):
         new_file = not self.path.exists()
@@ -39,18 +41,19 @@ class SnapshotLogger:
 
     def write(self, snap: SatSnapshot) -> None:
         ts = snap.timestamp.isoformat()
-        for sat in snap.satellites:
-            self._writer.writerow({
-                "timestamp":    ts,
-                "receiver":     snap.receiver_label,
-                "antenna_mount": snap.antenna_mount,
-                "mount_site":   snap.mount_site,
-                "gnss_id":      sat.gnss_id,
-                "signal_id":    sat.signal_id,
-                "sv_id":      sat.sv_id,
-                "cno_dBHz":   f"{sat.cno:.1f}",
-                "elev_deg":   f"{sat.elev:.1f}",
-                "azim_deg":   f"{sat.azim:.1f}",
-                "used":       int(sat.used),
-            })
-        self._file.flush()
+        with self._lock:
+            for sat in snap.satellites:
+                self._writer.writerow({
+                    "timestamp":    ts,
+                    "receiver":     snap.receiver_label,
+                    "antenna_mount": snap.antenna_mount,
+                    "mount_site":   snap.mount_site,
+                    "gnss_id":      sat.gnss_id,
+                    "signal_id":    sat.signal_id,
+                    "sv_id":      sat.sv_id,
+                    "cno_dBHz":   f"{sat.cno:.1f}",
+                    "elev_deg":   f"{sat.elev:.1f}",
+                    "azim_deg":   f"{sat.azim:.1f}",
+                    "used":       int(sat.used),
+                })
+            self._file.flush()
