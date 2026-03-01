@@ -85,12 +85,15 @@ _GSV_SIGNAL_NAME: dict[tuple[str, str], str] = {
     ("GP", "6"): "GPS-L2CL",
     ("GP", "7"): "GPS-L5I",
     ("GP", "8"): "GPS-L5Q",
+    ("GA", "1"): "GAL-E1B",
     ("GA", "7"): "GAL-E1C",
     ("GA", "2"): "GAL-E5aI",
     ("GA", "3"): "GAL-E5aQ",
     ("GA", "4"): "GAL-E6C",
     ("GB", "1"): "BDS-B1I",
     ("GB", "2"): "BDS-B1I-D2",
+    ("GB", "3"): "BDS-B2I",
+    ("GB", "4"): "BDS-B2I-D2",
     ("GB", "5"): "BDS-B2aI",
     ("GB", "6"): "BDS-B2aQ",
     ("GL", "1"): "GLO-L1OF",
@@ -112,6 +115,8 @@ def snapshot_from_gsv(sentences: list[Any], label: str, timestamp: datetime) -> 
         talker    = getattr(msg, "_talker", "GN")
         gnss_id   = _TALKER_GNSS.get(talker, talker)
         sid_raw   = str(getattr(msg, "signalID", ""))
+        if sid_raw in ("0", ""):   # signalID=0 = NMEA "all signals" aggregate; skip
+            continue
         signal_id = _GSV_SIGNAL_NAME.get((talker, sid_raw), f"{gnss_id}-sig{sid_raw}")
         for slot in ("01", "02", "03", "04"):
             sv_id = getattr(msg, f"svid_{slot}", None)
