@@ -17,13 +17,14 @@ from typing import Any
 
 @dataclass
 class SatInfo:
-    """Signal data for one satellite at one epoch."""
+    """Signal data for one satellite signal at one epoch."""
     gnss_id: str          # e.g. "GPS", "GLO", "GAL", "BDS"
     sv_id: int            # satellite PRN / slot number
     cno: float            # carrier-to-noise density, dBHz
     elev: float = float("nan")   # elevation angle, degrees
     azim: float = float("nan")   # azimuth angle, degrees
     used: bool = False    # receiver is using this SV in the solution
+    signal_id: str = ""   # e.g. "GPS-L1CA", "GAL-E1C", "BDS-B1I", "BDS-B2aI"
 
 
 @dataclass
@@ -77,6 +78,26 @@ def snapshot_from_navsat(msg: Any, label: str, timestamp: datetime,
 
 _TALKER_GNSS = {"GP": "GPS", "GL": "GLO", "GA": "GAL", "GB": "BDS", "GQ": "QZSS"}
 
+# Maps (NMEA talker, signalID string) → human-readable signal name.
+# Source: u-blox ZED-F9T NMEA protocol specification.
+_GSV_SIGNAL_NAME: dict[tuple[str, str], str] = {
+    ("GP", "1"): "GPS-L1CA",
+    ("GP", "6"): "GPS-L2CL",
+    ("GP", "7"): "GPS-L5I",
+    ("GP", "8"): "GPS-L5Q",
+    ("GA", "7"): "GAL-E1C",
+    ("GA", "2"): "GAL-E5aI",
+    ("GA", "3"): "GAL-E5aQ",
+    ("GA", "4"): "GAL-E6C",
+    ("GB", "1"): "BDS-B1I",
+    ("GB", "2"): "BDS-B1I-D2",
+    ("GB", "5"): "BDS-B2aI",
+    ("GB", "6"): "BDS-B2aQ",
+    ("GL", "1"): "GLO-L1OF",
+    ("GL", "3"): "GLO-L2OF",
+    ("GQ", "1"): "QZSS-L1CA",
+}
+
 
 def snapshot_from_gsv(sentences: list[Any], label: str, timestamp: datetime) -> SatSnapshot:
     """
@@ -88,8 +109,10 @@ def snapshot_from_gsv(sentences: list[Any], label: str, timestamp: datetime) -> 
     """
     snap = SatSnapshot(timestamp=timestamp, receiver_label=label)
     for msg in sentences:
-        talker   = getattr(msg, "_talker", "GN")
-        gnss_id  = _TALKER_GNSS.get(talker, talker)
+        talker    = getattr(msg, "_talker", "GN")
+        gnss_id   = _TALKER_GNSS.get(talker, talker)
+        sid_raw   = str(getattr(msg, "signalID", ""))
+        signal_id = _GSV_SIGNAL_NAME.get((talker, sid_raw), f"{gnss_id}-sig{sid_raw}")
         for slot in ("01", "02", "03", "04"):
             sv_id = getattr(msg, f"svid_{slot}", None)
             cno   = getattr(msg, f"cno_{slot}",  None)
@@ -101,6 +124,7 @@ def snapshot_from_gsv(sentences: list[Any], label: str, timestamp: datetime) -> 
                 gnss_id, int(sv_id),
                 float(cno) if cno not in (None, "") else 0.0,
                 float(elev or 0), float(azim or 0),
+                signal_id=signal_id,
             ))
     return snap
 
@@ -161,12 +185,13 @@ class GsvAccumulator:
             snap.satellites.extend(partial.satellites)
         self._buffer.clear()
 
-        # The F9T emits one GSV group per signal band (signalID), so a
-        # satellite tracked on two signals appears twice with the same sv_id.
-        # Keep only the highest C/N0 observation per (gnss_id, sv_id) pair.
+        # The F9T may repeat the same (gnss_id, sv_id, signal_id) across
+        # multiple GSV sentences within one epoch.  Deduplicate on the full
+        # triple, keeping the highest C/N0 for each unique signal observation.
+        # Different signals for the same satellite are intentionally kept.
         best: dict[tuple, SatInfo] = {}
         for s in snap.satellites:
-            key = (s.gnss_id, s.sv_id)
+            key = (s.gnss_id, s.sv_id, s.signal_id)
             if key not in best or s.cno > best[key].cno:
                 best[key] = s
         snap.satellites = list(best.values())

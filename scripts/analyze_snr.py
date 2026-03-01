@@ -64,16 +64,17 @@ def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
         a(f"  +ve → REF stronger;  −ve → DUT stronger")
         a("")
 
-    a("── Mean C/N0 by constellation ──────────────────────────────")
+    sig_col = "signal_id" if "signal_id" in df.columns else "gnss_id"
+    a(f"── Mean C/N0 by signal ({'signal_id' if sig_col == 'signal_id' else 'gnss_id — old CSV'}) ──")
     # σ = std of per-epoch means (temporal variability), not std of raw obs
-    epoch_cst = (df.groupby(["timestamp", "receiver", "gnss_id"])["cno_dBHz"]
+    epoch_sig = (df.groupby(["timestamp", "receiver", sig_col])["cno_dBHz"]
                    .mean().reset_index())
-    cst_mean = (epoch_cst.groupby(["receiver", "gnss_id"])["cno_dBHz"]
+    sig_mean = (epoch_sig.groupby(["receiver", sig_col])["cno_dBHz"]
                          .agg(mean_cno="mean", std_cno="std", n="count")
                          .reset_index()
-                         .sort_values(["gnss_id", "receiver"]))
-    for _, row in cst_mean.iterrows():
-        a(f"  {row['receiver']:6s}  {row['gnss_id']:12s}  "
+                         .sort_values([sig_col, "receiver"]))
+    for _, row in sig_mean.iterrows():
+        a(f"  {row['receiver']:6s}  {row[sig_col]:14s}  "
           f"mean={row['mean_cno']:.2f} ±{row['std_cno']:.2f} dBHz  n_epochs={int(row['n'])}")
     a("")
 
@@ -157,39 +158,41 @@ def plot_satcount(epoch: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
-def plot_by_constellation(df: pd.DataFrame, out_stem: Path) -> None:
-    # Compute per-epoch per-constellation means, then derive per-constellation
-    # stats for REF and DUT. Plot REF−DUT delta with quadrature error bars:
-    # σ_diff = sqrt(σ_REF² + σ_DUT²). Error bar crossing zero = not significant.
-    epoch_cst = (df.groupby(["timestamp", "receiver", "gnss_id"])["cno_dBHz"]
-                   .mean()
-                   .reset_index())
-    stats = (epoch_cst.groupby(["receiver", "gnss_id"])["cno_dBHz"]
-                      .agg(["mean", "std"])
-                      .reset_index())
+def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
+    # Compute per-epoch per-signal means, then plot receiver-A minus receiver-B
+    # delta with quadrature error bars.  Works with any two-receiver CSV.
+    sig_col = "signal_id" if "signal_id" in df.columns else "gnss_id"
+    receivers = sorted(df["receiver"].unique())
+    rx_a, rx_b = receivers[0], receivers[1] if len(receivers) > 1 else (receivers[0], receivers[0])
 
-    consts = sorted(df["gnss_id"].unique())
+    epoch_sig = (df.groupby(["timestamp", "receiver", sig_col])["cno_dBHz"]
+                   .mean().reset_index())
+    stats = (epoch_sig.groupby(["receiver", sig_col])["cno_dBHz"]
+                      .agg(["mean", "std"]).reset_index())
+
+    signals = sorted(df[sig_col].unique())
     deltas, errs = [], []
-    for c in consts:
-        r = stats[(stats["receiver"] == "REF") & (stats["gnss_id"] == c)]
-        d = stats[(stats["receiver"] == "DUT") & (stats["gnss_id"] == c)]
-        if r.empty or d.empty:
+    for s in signals:
+        ra = stats[(stats["receiver"] == rx_a) & (stats[sig_col] == s)]
+        rb = stats[(stats["receiver"] == rx_b) & (stats[sig_col] == s)]
+        if ra.empty or rb.empty:
             deltas.append(0); errs.append(0)
             continue
-        deltas.append(float(r["mean"].iloc[0] - d["mean"].iloc[0]))
-        errs.append(float((r["std"].iloc[0]**2 + d["std"].iloc[0]**2) ** 0.5))
+        deltas.append(float(ra["mean"].iloc[0] - rb["mean"].iloc[0]))
+        errs.append(float((ra["std"].iloc[0]**2 + rb["std"].iloc[0]**2) ** 0.5))
 
-    fig, ax = plt.subplots(figsize=(10, 4))
+    fig, ax = plt.subplots(figsize=(max(8, len(signals) * 1.4), 4))
     colors = ["steelblue" if d >= 0 else "tomato" for d in deltas]
-    ax.bar(consts, deltas, color=colors, alpha=0.8,
+    ax.bar(signals, deltas, color=colors, alpha=0.8,
            yerr=errs, capsize=6, error_kw={"linewidth": 1.5, "color": "black"})
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_ylabel("REF − DUT C/N0 (dBHz)")
-    ax.set_title("REF − DUT mean C/N0 by constellation\n"
-                 "error bars = ±1σ quadrature (√(σ_REF² + σ_DUT²)); "
+    ax.set_ylabel(f"{rx_a} − {rx_b} C/N0 (dBHz)")
+    ax.set_title(f"{rx_a} − {rx_b} mean C/N0 by signal\n"
+                 "error bars = ±1σ quadrature (√(σ_A² + σ_B²)); "
                  "bar crossing zero = not significant")
+    plt.xticks(rotation=20, ha="right")
     ax.grid(True, alpha=0.3, axis="y"); fig.tight_layout()
-    path = out_stem.parent / (out_stem.name + "_by_constellation.png")
+    path = out_stem.parent / (out_stem.name + "_by_signal.png")
     fig.savefig(path, dpi=120); plt.close(fig)
     print(f"Plot    → {path}")
 
@@ -213,7 +216,7 @@ def main():
     plot_cno(epoch, out_stem)
     plot_delta(epoch, out_stem)
     plot_satcount(epoch, out_stem)
-    plot_by_constellation(df, out_stem)
+    plot_by_signal(df, out_stem)
     print("Done.")
 
 
