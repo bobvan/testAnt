@@ -32,6 +32,9 @@ from testant.snr import GsvAccumulator, snapshot_from_navsat
 from testant.logger import SnapshotLogger
 from testant.rawx import snapshot_from_rawx
 from testant.rawx_logger import RawxLogger
+from testant.timtp_logger import TimtpLogger
+from testant.ticc import Ticc
+from testant.ticc_logger import TiccLogger
 
 
 def load_toml(path: Path) -> dict:
@@ -65,7 +68,7 @@ def build_thread_configs(receivers: dict, run: dict) -> list[dict]:
 
 
 def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
-                  stop: threading.Event):
+                  timtp_logger: TimtpLogger, stop: threading.Event):
     receiver      = cfg["receiver"]
     port          = cfg["port"]
     baud          = cfg["baud"]
@@ -93,6 +96,16 @@ def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
                                                   timestamp=ts)
                         rawx_logger.write(ts, receiver, antenna_mount, meas)
                         snap = None
+                    elif identity == "TIM-TP":
+                        ts = datetime.now(tz=timezone.utc)
+                        timtp_logger.write(
+                            timestamp = ts,
+                            receiver  = receiver,
+                            qerr_ps   = int(getattr(msg, "qErr",  0)),
+                            tow_ms    = int(getattr(msg, "towMS", 0)),
+                            week      = int(getattr(msg, "week",  0)),
+                        )
+                        snap = None
                     else:
                         snap = acc.feed(msg)
 
@@ -110,6 +123,24 @@ def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
             if stop.is_set():
                 break
             print(f"[{receiver}] serial error: {exc} — reconnecting in 3s", flush=True)
+            import time
+            time.sleep(3)
+
+
+def ticc_thread(cfg: dict, logger: TiccLogger, stop: threading.Event):
+    port = cfg["port"]
+    baud = cfg["baud"]
+    while not stop.is_set():
+        try:
+            with Ticc(port=port, baud=baud) as ticc:
+                for ch, ts in ticc:
+                    if stop.is_set():
+                        break
+                    logger.write(ch, ts)
+        except Exception as exc:
+            if stop.is_set():
+                break
+            print(f"[TICC] error: {exc} — reconnecting in 3s", flush=True)
             import time
             time.sleep(3)
 
@@ -142,24 +173,46 @@ def main():
     if desc:
         print(f"Run: {desc}")
 
-    out_path  = Path(args.out)
-    rawx_path = Path(str(out_path.with_suffix("")) + "_rawx.csv")
+    out_path   = Path(args.out)
+    stem       = str(out_path.with_suffix(""))
+    rawx_path  = Path(stem + "_rawx.csv")
+    timtp_path = Path(stem + "_timtp.csv")
+    ticc_path  = Path(stem + "_ticc.csv")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    ticc_cfg = receivers.get("ticc")
+
     stop = threading.Event()
-    with SnapshotLogger(out_path) as logger, RawxLogger(rawx_path) as rawx_logger:
+    with (SnapshotLogger(out_path)  as logger,
+          RawxLogger(rawx_path)     as rawx_logger,
+          TimtpLogger(timtp_path)   as timtp_logger,
+          TiccLogger(ticc_path)     as ticc_logger):
         threads = []
         for cfg in thread_cfgs:
             t = threading.Thread(
                 target=reader_thread,
-                args=(cfg, logger, rawx_logger, stop),
+                args=(cfg, logger, rawx_logger, timtp_logger, stop),
                 daemon=True,
             )
             threads.append(t)
             t.start()
 
+        if ticc_cfg:
+            t = threading.Thread(
+                target=ticc_thread,
+                args=(ticc_cfg, ticc_logger, stop),
+                daemon=True,
+            )
+            threads.append(t)
+            t.start()
+        else:
+            print("(No [ticc] in receivers.toml — TICC logging skipped)")
+
         print(f"Logging C/N0  → {out_path}")
         print(f"Logging RAWX  → {rawx_path}")
+        print(f"Logging TIM-TP→ {timtp_path}")
+        if ticc_cfg:
+            print(f"Logging TICC  → {ticc_path}")
         print("Press Ctrl-C to stop.")
         try:
             for t in threads:
