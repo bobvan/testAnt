@@ -31,6 +31,7 @@ class SatSnapshot:
     """All satellites seen at one epoch from one receiver."""
     timestamp: datetime
     receiver_label: str
+    antenna_mount: str = ""
     satellites: list[SatInfo] = field(default_factory=list)
 
     @property
@@ -54,9 +55,10 @@ class SatSnapshot:
 _GNSS_ID_MAP = {0: "GPS", 1: "SBAS", 2: "GAL", 3: "BDS", 5: "QZSS", 6: "GLO"}
 
 
-def snapshot_from_navsat(msg: Any, label: str, timestamp: datetime) -> SatSnapshot:
+def snapshot_from_navsat(msg: Any, label: str, timestamp: datetime,
+                         antenna_mount: str = "") -> SatSnapshot:
     """Build a SatSnapshot from a UBX-NAV-SAT message."""
-    snap = SatSnapshot(timestamp=timestamp, receiver_label=label)
+    snap = SatSnapshot(timestamp=timestamp, receiver_label=label, antenna_mount=antenna_mount)
     num = getattr(msg, "numSvs", 0)
     for i in range(num):
         gnss_id_raw = getattr(msg, f"gnssId_{i:02d}", None)
@@ -119,8 +121,9 @@ class GsvAccumulator:
 
     _GGA_IDS = {"GNGGA", "GPGGA", "GAGGA", "GBGGA"}
 
-    def __init__(self, label: str):
+    def __init__(self, label: str, antenna_mount: str = ""):
         self.label = label
+        self.antenna_mount = antenna_mount
         self._buffer: list[Any] = []   # GSV sentences for the current epoch
 
     def feed(self, msg: Any) -> SatSnapshot | None:
@@ -148,7 +151,7 @@ class GsvAccumulator:
     def _emit(self) -> SatSnapshot:
         from datetime import datetime, timezone
         ts   = datetime.now(tz=timezone.utc)
-        snap = SatSnapshot(timestamp=ts, receiver_label=self.label)
+        snap = SatSnapshot(timestamp=ts, receiver_label=self.label, antenna_mount=self.antenna_mount)
         for msg in self._buffer:
             partial = snapshot_from_gsv([msg], self.label, ts)
             snap.satellites.extend(partial.satellites)

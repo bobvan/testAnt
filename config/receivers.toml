@@ -9,13 +9,23 @@
 #
 # gpsd is configured to hold ttyACM0. Stop it before running our scripts:
 #   sudo systemctl stop gpsd gpsd.socket
+#
+# --- receiver vs antenna_mount ---
+# "label" identifies the receiver hardware (stays fixed across runs).
+# "antenna_mount" identifies the physical antenna+mount under test.
+# To separate receiver effects from antenna effects, run the same pair of
+# antenna_mounts twice with the receiver connections swapped between runs.
+# Both fields are written to every CSV row so post-hoc analysis can group
+# by either dimension.
 
 [receiver.A]
-port   = "/dev/gnss-ref"
-baud   = 115200
-label  = "REF"          # role: reference antenna
+port          = "/dev/gnss-ref"
+baud          = 115200
+label         = "REF"          # hardware: ZED-F9T-20B (no GLONASS)
+antenna_mount = "mount-A"      # change this to describe what is plugged in
 
 [receiver.B]
-port   = "/dev/gnss-dut"
-baud   = 115200
-label  = "DUT"          # role: antenna under test
+port          = "/dev/gnss-dut"
+baud          = 115200
+label         = "DUT"          # hardware: ZED-F9T (with GLONASS)
+antenna_mount = "mount-B"      # change this to describe what is plugged in

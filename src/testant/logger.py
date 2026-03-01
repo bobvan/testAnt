@@ -13,7 +13,7 @@ from pathlib import Path
 from .snr import SatSnapshot
 
 FIELDS = [
-    "timestamp", "receiver", "gnss_id", "sv_id",
+    "timestamp", "receiver", "antenna_mount", "gnss_id", "sv_id",
     "cno_dBHz", "elev_deg", "azim_deg", "used",
 ]
 
@@ -40,9 +40,10 @@ class SnapshotLogger:
         ts = snap.timestamp.isoformat()
         for sat in snap.satellites:
             self._writer.writerow({
-                "timestamp":  ts,
-                "receiver":   snap.receiver_label,
-                "gnss_id":    sat.gnss_id,
+                "timestamp":    ts,
+                "receiver":     snap.receiver_label,
+                "antenna_mount": snap.antenna_mount,
+                "gnss_id":      sat.gnss_id,
                 "sv_id":      sat.sv_id,
                 "cno_dBHz":   f"{sat.cno:.1f}",
                 "elev_deg":   f"{sat.elev:.1f}",

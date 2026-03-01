@@ -36,10 +36,11 @@ def load_config(path: Path) -> dict:
 
 
 def reader_thread(cfg: dict, label: str, logger: SnapshotLogger, stop: threading.Event):
-    port  = cfg["port"]
-    baud  = cfg["baud"]
-    label = cfg.get("label", label)
-    acc   = GsvAccumulator(label)
+    port          = cfg["port"]
+    baud          = cfg["baud"]
+    label         = cfg.get("label", label)
+    antenna_mount = cfg.get("antenna_mount", "")
+    acc           = GsvAccumulator(label, antenna_mount=antenna_mount)
 
     while not stop.is_set():
         try:
@@ -51,15 +52,17 @@ def reader_thread(cfg: dict, label: str, logger: SnapshotLogger, stop: threading
 
                     if identity == "NAV-SAT":
                         ts   = datetime.now(tz=timezone.utc)
-                        snap = snapshot_from_navsat(msg, label=label, timestamp=ts)
+                        snap = snapshot_from_navsat(msg, label=label, timestamp=ts,
+                                                    antenna_mount=antenna_mount)
                     else:
                         snap = acc.feed(msg)
 
                     if snap is not None:
                         logger.write(snap)
                         ts = snap.timestamp
+                        tag = f"{label}/{antenna_mount}" if antenna_mount else label
                         print(
-                            f"[{ts.strftime('%H:%M:%S')}] {label:6s} "
+                            f"[{ts.strftime('%H:%M:%S')}] {tag:20s} "
                             f"sats={snap.count:2d} used={snap.used_count:2d} "
                             f"mean_C/N0={snap.mean_cno:.1f} dBHz",
                             flush=True,
