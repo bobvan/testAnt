@@ -71,13 +71,15 @@ _MASK_NONE = struct.pack("<I", 0x0000_0000)
 # composition is identical and neither receiver has a satellite-count advantage.
 #
 # NOTE: L2 signal keys (GPS_L2C, GAL_E5B, BDS_B2, GLO_L2) are NAK'd on all
-# known TIM firmware variants — firmware-locked, L1-only signals are effective.
+# known TIM firmware variants.  GPS L5 (0x10310004) is separate from those and
+# is expected to ACK once the L5 health override (step 4) has been applied.
 LAYERS = 7
 
 SIGNAL_CONFIG = [
-    # GPS ── enable system + L1C/A
+    # GPS ── enable system + L1C/A + L5
     ("CFG_SIGNAL_GPS_ENA",       1),
     ("CFG_SIGNAL_GPS_L1CA_ENA",  1),
+    ("CFG_SIGNAL_GPS_L5_ENA",    1),
     # Galileo ── enable system + E1
     ("CFG_SIGNAL_GAL_ENA",       1),
     ("CFG_SIGNAL_GAL_E1_ENA",    1),
