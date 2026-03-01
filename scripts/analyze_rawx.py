@@ -17,6 +17,7 @@ Outputs (all suffixed onto <out>):
     _lock_duration.png    — carrier phase lock duration CDF per signal
     _cmc_vs_elev.png      — detrended CMC std vs elevation (requires --snr)
     _cmc_skyplot.png      — |CMC| polar map by direction (requires --snr)
+    _slip_timeline.png    — cycle slip raster (colour=signal, shape=antenna, size=severity)
 """
 
 import argparse
@@ -490,17 +491,17 @@ def plot_cmc_skyplot(df: pd.DataFrame, out_stem: Path) -> None:
     if cmc_ok.empty:
         return
 
-    receivers = sorted(cmc_ok["receiver"].unique())
+    panels = sorted(cmc_ok["antenna_mount"].unique())
     vmax = float(cmc_ok["cmc_detrended_m"].abs().quantile(0.95))
 
-    fig, axes = plt.subplots(1, len(receivers),
-                             figsize=(7 * len(receivers), 7),
+    fig, axes = plt.subplots(1, len(panels),
+                             figsize=(7 * len(panels), 7),
                              subplot_kw={"projection": "polar"})
-    if len(receivers) == 1:
+    if len(panels) == 1:
         axes = [axes]
 
-    for ax, rx in zip(axes, receivers):
-        sub   = cmc_ok[cmc_ok["receiver"] == rx]
+    for ax, ant in zip(axes, panels):
+        sub   = cmc_ok[cmc_ok["antenna_mount"] == ant]
         theta = np.radians(sub["azim_deg"].values)
         r     = 90.0 - sub["elev_deg"].values      # 0=zenith, 90=horizon
         sc = ax.scatter(theta, r,
@@ -512,7 +513,15 @@ def plot_cmc_skyplot(df: pd.DataFrame, out_stem: Path) -> None:
         ax.set_ylim(0, 90)
         ax.set_yticks([0, 30, 60, 90])
         ax.set_yticklabels(["90°", "60°", "30°", "0°"], fontsize=7)
-        ax.set_title(rx, fontsize=12, pad=15)
+        # Build title: "antenna_mount @ mount_site (RECEIVER)"
+        if "mount_site" in sub.columns:
+            site = sub["mount_site"].dropna()
+            site_str = f" @ {site.iloc[0]}" if not site.empty and site.iloc[0] else ""
+        else:
+            site_str = ""
+        rx = sub["receiver"].dropna()
+        rx_str = f" ({rx.iloc[0]})" if not rx.empty else ""
+        ax.set_title(f"{ant}{site_str}{rx_str}", fontsize=12, pad=15)
         plt.colorbar(sc, ax=ax, label="|CMC| (m)", fraction=0.046, pad=0.04)
 
     fig.suptitle("CMC multipath skyplot — |detrended CMC| by direction\n"
@@ -520,6 +529,146 @@ def plot_cmc_skyplot(df: pd.DataFrame, out_stem: Path) -> None:
                  fontsize=11)
     fig.tight_layout()
     path = out_stem.parent / (out_stem.name + "_cmc_skyplot.png")
+    fig.savefig(path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Plot    → {path}")
+
+
+def plot_cycle_slip_timeline(slips: pd.DataFrame, out_stem: Path) -> None:
+    """
+    Timeline of cycle slip events.
+
+    Top panel — raster plot, one horizontal lane per (gnss_id, sv_id):
+      colour = signal_id       (which frequency slipped)
+      shape  = antenna_mount   (which antenna)
+      size   = drop_ms         (how much lock time was lost; larger = worse)
+    Red shading marks windows where ≥3 SVs slip within 5 s — potential
+    interference burst, ionospheric event, or receiver reset.
+
+    Bottom panel — 1-minute stacked histogram of slip counts by signal.
+
+    Patterns to look for:
+      • Vertical stripe (many SVs at once) → interference / ionospheric event /
+        receiver reset.  Both antennas same time = common-mode; one only = local.
+      • Same SV, both antennas → satellite-side anomaly (manoeuvre, signal anomaly)
+      • Same SV, one antenna only → local multipath or blockage at that mount
+      • Cluster near run start → initial lock acquisition (not real slips)
+      • L5 slips >> L1 slips on same antenna → antenna poorly suited for L5
+    """
+    if slips.empty:
+        return
+
+    slips = slips.copy()
+
+    # ── SV labels and y-positions ──────────────────────────────────────
+    _PREFIX = {"GPS": "G", "GAL": "E", "BDS": "C", "GLO": "R",
+               "QZSS": "J", "SBAS": "S"}
+    all_svs = (slips[["gnss_id", "sv_id"]]
+               .drop_duplicates()
+               .sort_values(["gnss_id", "sv_id"])
+               .reset_index(drop=True))
+    all_svs["label"] = all_svs.apply(
+        lambda r: f"{_PREFIX.get(r['gnss_id'], r['gnss_id'][0])}{int(r['sv_id']):02d}",
+        axis=1)
+    all_svs["y"] = all_svs.index
+    sv_y     = {(r.gnss_id, r.sv_id): r.y for r in all_svs.itertuples()}
+    sv_label = dict(zip(all_svs["y"], all_svs["label"]))
+    slips["_y"] = slips.apply(lambda r: sv_y.get((r["gnss_id"], r["sv_id"]), np.nan), axis=1)
+
+    # ── Colour by signal_id ────────────────────────────────────────────
+    signals   = sorted(slips["signal_id"].dropna().unique())
+    cmap10    = matplotlib.colormaps.get_cmap("tab10").resampled(max(len(signals), 1))
+    sig_color = {s: cmap10(i) for i, s in enumerate(signals)}
+
+    # ── Marker shape by antenna_mount ──────────────────────────────────
+    _MARKERS  = ["o", "s", "^", "D"]
+    ants      = sorted(slips["antenna_mount"].dropna().unique())
+    ant_marker = {a: _MARKERS[i % len(_MARKERS)] for i, a in enumerate(ants)}
+
+    # ── Marker size proportional to drop_ms ───────────────────────────
+    drop = slips["drop_ms"].clip(upper=64500)
+    dr   = drop.max() - drop.min()
+    slips["_sz"] = 40 + 260 * ((drop - drop.min()) / dr) if dr > 0 else 120
+
+    # ── Layout ────────────────────────────────────────────────────────
+    n_svs  = len(all_svs)
+    fig_h  = max(3, 0.35 * n_svs)
+    fig, (ax_r, ax_h) = plt.subplots(
+        2, 1, figsize=(14, fig_h + 2.5),
+        gridspec_kw={"height_ratios": [fig_h, 2]},
+        sharex=True)
+
+    # ── Raster panel ──────────────────────────────────────────────────
+    # Faint horizontal grid lines between SV lanes
+    for y in sv_label:
+        ax_r.axhline(y, color="lightgrey", linewidth=0.4, zorder=1)
+
+    sig_handles = {}
+    ant_handles = {}
+    for ant in ants:
+        for sig in signals:
+            sub = slips[(slips["antenna_mount"] == ant) & (slips["signal_id"] == sig)]
+            if sub.empty:
+                continue
+            ax_r.scatter(sub["timestamp"], sub["_y"],
+                         c=[sig_color[sig]] * len(sub),
+                         marker=ant_marker[ant],
+                         s=sub["_sz"], alpha=0.85, zorder=3)
+            if sig not in sig_handles:
+                sig_handles[sig] = plt.Line2D(
+                    [0], [0], marker="o", color="w",
+                    markerfacecolor=sig_color[sig], markersize=8, label=sig)
+            if ant not in ant_handles:
+                ant_handles[ant] = plt.Line2D(
+                    [0], [0], marker=ant_marker[ant], color="grey",
+                    markersize=8, linestyle="none", label=ant)
+
+    # Red shading for simultaneous bursts (≥3 SVs within 5 s)
+    slip_5s = slips.set_index("timestamp").resample("5s").size()
+    for t_start in slip_5s[slip_5s >= 3].index:
+        ax_r.axvspan(t_start, t_start + pd.Timedelta(seconds=5),
+                     alpha=0.10, color="red", zorder=0)
+
+    ax_r.set_yticks(list(sv_label.keys()))
+    ax_r.set_yticklabels(list(sv_label.values()), fontsize=7)
+    ax_r.yaxis.set_tick_params(length=0)
+    ax_r.set_ylabel("Satellite")
+    ax_r.grid(axis="x", alpha=0.3)
+
+    all_handles = list(sig_handles.values()) + list(ant_handles.values())
+    if all_handles:
+        ax_r.legend(handles=all_handles, fontsize=7, loc="upper right",
+                    ncol=max(1, len(all_handles) // 5))
+
+    # ── Histogram panel ───────────────────────────────────────────────
+    t0   = slips["timestamp"].min().floor("min")
+    t1   = slips["timestamp"].max().ceil("min") + pd.Timedelta(minutes=1)
+    bins = pd.date_range(t0, t1, freq="1min")
+    if len(bins) > 1:
+        bin_mids = bins[:-1] + pd.Timedelta(seconds=30)
+        width_days = 0.85 / 1440          # 0.85 min in matplotlib date units
+        bottom = np.zeros(len(bin_mids))
+        for sig in signals:
+            sub = slips[slips["signal_id"] == sig]
+            counts, _ = np.histogram(
+                sub["timestamp"].values.astype("datetime64[ns]").astype(np.int64),
+                bins=bins.values.astype("datetime64[ns]").astype(np.int64))
+            ax_h.bar(mdates.date2num(bin_mids), counts, bottom=bottom,
+                     width=width_days, color=sig_color[sig], alpha=0.85, label=sig)
+            bottom += counts
+    ax_h.set_ylabel("Slips / min")
+    ax_h.yaxis.set_major_locator(plt.MaxNLocator(integer=True, nbins=4))
+    ax_h.grid(axis="y", alpha=0.3)
+    ax_h.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    fig.autofmt_xdate()
+
+    fig.suptitle(
+        "Cycle slip timeline\n"
+        "colour = signal,  shape = antenna,  size ∝ lock lost (ms);  "
+        "red band = ≥3 SVs within 5 s",
+        fontsize=10, y=1.01)
+    fig.tight_layout()
+    path = out_stem.parent / (out_stem.name + "_slip_timeline.png")
     fig.savefig(path, dpi=120, bbox_inches="tight")
     plt.close(fig)
     print(f"Plot    → {path}")
@@ -567,6 +716,7 @@ def main():
     plot_lock_duration(df, out_stem)
     plot_cmc_vs_elevation(df, out_stem)
     plot_cmc_skyplot(df, out_stem)
+    plot_cycle_slip_timeline(slips, out_stem)
     print("Done.")
 
 
