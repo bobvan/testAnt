@@ -3,27 +3,35 @@
 configure_receivers.py — Factory reset and configure both ZED-F9T receivers.
 
 Hardware:
-  REF — ZED-F9T-20B (FWVER=TIM 2.25): GPS, Galileo, BeiDou, SBAS, QZSS, NavIC  (no GLONASS)
-  DUT — ZED-F9T     (FWVER=TIM 2.20): GPS, GLONASS, Galileo, BeiDou, SBAS, QZSS, NavIC
+  TOP — ZED-F9T-20B (FWVER=TIM 2.25): GPS, Galileo, BeiDou, SBAS, QZSS, NavIC  (no GLONASS)
+  BOT — ZED-F9T     (FWVER=TIM 2.20): GPS, GLONASS, Galileo, BeiDou, SBAS, QZSS, NavIC
 
 Both receivers are configured to the same constellation set — the smallest common
 subset — so that neither has a constellation advantage over the other:
 
-    ON : GPS (L1C/A), Galileo (E1), BeiDou (B1I)
+    ON : GPS (L1C/A + L5), Galileo (E1), BeiDou (B1I)
     OFF: GLONASS, SBAS, QZSS (Japanese), NavIC (Indian)
 
-GLONASS is explicitly disabled on both.  On REF (no GLONASS hardware) the
+GLONASS is explicitly disabled on both.  On TOP (no GLONASS hardware) the
 disable message is expected to NAK and that is treated as benign — the receiver
-has no GLONASS to enable anyway.  On DUT, whose ROM defaults have GLONASS on,
+has no GLONASS to enable anyway.  On BOT, whose ROM defaults have GLONASS on,
 the disable is required.
 
 NOTE: L2 signal keys (GPS_L2C, GAL_E5B, BDS_B2, GLO_L2) are firmware-locked
 and NAK'd on all known TIM firmware variants.
 
+GPS L5 health override: GPS Block IIF/III satellites flag L5 as "unhealthy"
+in the navigation message while the constellation is pre-operational.  A raw
+CFG-VALSET blob (key 0x10320001, source: u-blox App Note UBX-21038688) overrides
+this so the receiver uses GPS L1 C/A health status for L5 instead.  A NAK
+here means the key is not supported on that firmware variant and is treated as
+benign — GPS L5 simply will not be tracked.
+
 Steps performed on each receiver:
   1. Factory reset  — CFG-CFG (clear + save ROM defaults to flash) + CFG-RST cold start
   2. Reconnect      — wait for USB device to reappear
   3. Configure      — CFG-VALSET (layers=RAM+BBR+Flash) for signal enables
+  4. GPS L5 health  — raw CFG-VALSET blob to override L5 health status (App Note UBX-21038688)
 
 Usage:
     python scripts/configure_receivers.py [--receivers config/receivers.toml]
@@ -85,13 +93,44 @@ SIGNAL_CONFIG = [
 ]
 
 # Sent as a separate CFG-VALSET to ensure GLONASS is off on both receivers.
-# DUT (ZED-F9T) has GLONASS enabled in its ROM defaults, so this is required
-# there.  REF (ZED-F9T-20B) lacks GLONASS hardware and will NAK these keys —
+# BOT (ZED-F9T) has GLONASS enabled in its ROM defaults, so this is required
+# there.  TOP (ZED-F9T-20B) lacks GLONASS hardware and will NAK these keys —
 # that NAK is benign and is logged but does not abort configuration.
 GLO_DISABLE_CONFIG = [
     ("CFG_SIGNAL_GLO_ENA",    0),
     ("CFG_SIGNAL_GLO_L1_ENA", 0),
 ]
+
+# ── GPS L5 health status override ───────────────────────────────────── #
+# Source: u-blox App Note UBX-21038688 "GPS L5 configuration"
+#
+# GPS L5 signals are flagged "unhealthy" in the nav message while the
+# constellation remains pre-operational.  This raw CFG-VALSET message sets
+# key 0x10320001 to 1, which causes the receiver to substitute GPS L1 C/A
+# health status for L5 — making L5 satellites visible to the solution.
+#
+# Breakdown:
+#   B5 62           — UBX sync chars
+#   06 8A           — class=CFG, id=VALSET
+#   09 00           — payload length = 9
+#   01              — CFG-VALSET version = 1
+#   07              — layers = RAM(1) | BBR(2) | Flash(4)  (same as LAYERS above)
+#   00 00           — reserved
+#   01 00 32 10     — key 0x10320001 (little-endian)
+#   01              — value = 1 (enable override)
+#   E5 26           — Fletcher-8 checksum (verified against App Note values)
+#
+# A NAK response means this key is unsupported on the running firmware —
+# GPS L5 will simply not be tracked on that receiver.
+_GPS_L5_HEALTH_OVRD = bytes([
+    0xB5, 0x62,              # UBX sync
+    0x06, 0x8A,              # class=CFG, id=VALSET
+    0x09, 0x00,              # length = 9
+    0x01, 0x07, 0x00, 0x00,  # version=1, layers=RAM+BBR+Flash, reserved
+    0x01, 0x00, 0x32, 0x10,  # key 0x10320001 (little-endian)
+    0x01,                    # value = 1 (enable)
+    0xE5, 0x26,              # Fletcher checksum
+])
 
 
 # ── serial helpers ──────────────────────────────────────────────────── #
@@ -122,6 +161,14 @@ def send_cfg(ser: serial.Serial, rdr: UBXReader, msg: UBXMessage, label: str) ->
     ser.write(msg.serialize())
     ok = wait_ack(rdr)
     print(f"    {label}: {'OK' if ok else 'FAIL'}")
+    return ok
+
+
+def send_raw(ser: serial.Serial, rdr: UBXReader, raw: bytes, label: str) -> bool:
+    """Send pre-built UBX bytes (e.g. from an app note) and wait for ACK."""
+    ser.write(raw)
+    ok = wait_ack(rdr)
+    print(f"    {label}: {'OK' if ok else 'FAIL (NAK or timeout)'}")
     return ok
 
 
@@ -223,6 +270,13 @@ def configure_one(label: str, port: str, baud: int) -> None:
         print(f"    {state}  {key}")
 
     ok = configure_signals(ser, rdr)
+
+    # ── Step 4: GPS L5 health override ────────────────────────────────── #
+    print("\n[4] GPS L5 health override (App Note UBX-21038688)")
+    l5_ok = send_raw(ser, rdr, _GPS_L5_HEALTH_OVRD,
+                     "CFG-VALSET GPS L5 health override (key 0x10320001)")
+    if not l5_ok:
+        print("    (NAK — key not supported on this firmware; GPS L5 will not be tracked)")
 
     ser.close()
     print(f"\n  {'Done.' if ok else 'FAILED — check receiver.'}")
