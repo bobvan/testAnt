@@ -505,7 +505,7 @@ def plot_cmc_skyplot(df: pd.DataFrame, out_stem: Path) -> None:
         r     = 90.0 - sub["elev_deg"].values      # 0=zenith, 90=horizon
         sc = ax.scatter(theta, r,
                         c=sub["cmc_detrended_m"].abs().values,
-                        cmap="hot_r", s=3, alpha=0.5,
+                        cmap="hot", s=3, alpha=0.5,
                         vmin=0, vmax=vmax)
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
