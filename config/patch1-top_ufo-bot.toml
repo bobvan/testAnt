@@ -1,0 +1,14 @@
+# Sensitivity test: Patch1 (L1-only) on TOP, UFO (SPK6618H) on BOT.
+
+[run]
+description = "sensitivity test: Patch1 on TOP, UFO on BOT"
+
+[antenna.A]
+label      = "Patch1"
+mount_site = "test"
+receiver   = "TOP"
+
+[antenna.B]
+label      = "UFO"
+mount_site = "test"
+receiver   = "BOT"
