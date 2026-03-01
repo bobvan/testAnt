@@ -13,3 +13,6 @@ matplotlib>=3.7
 
 # TOML config (stdlib in Python 3.11+, backport for older)
 tomli>=2.0; python_version < "3.11"
+
+# Allan deviation / TDEV for PPS stability analysis
+allantools>=2019.9
