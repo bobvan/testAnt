@@ -13,7 +13,7 @@ from pathlib import Path
 from .snr import SatSnapshot
 
 FIELDS = [
-    "timestamp", "receiver", "antenna_mount", "gnss_id", "sv_id",
+    "timestamp", "receiver", "antenna_mount", "mount_site", "gnss_id", "sv_id",
     "cno_dBHz", "elev_deg", "azim_deg", "used",
 ]
 
@@ -43,6 +43,7 @@ class SnapshotLogger:
                 "timestamp":    ts,
                 "receiver":     snap.receiver_label,
                 "antenna_mount": snap.antenna_mount,
+                "mount_site":   snap.mount_site,
                 "gnss_id":      sat.gnss_id,
                 "sv_id":      sat.sv_id,
                 "cno_dBHz":   f"{sat.cno:.1f}",

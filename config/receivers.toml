@@ -1,31 +1,27 @@
-# Receiver configuration for the two u-blox F9T units.
-# Copy to config/local.toml and adjust port paths before running.
-# local.toml is gitignored so machine-specific paths stay local.
+# Hardware configuration for the two u-blox F9T receivers.
+# This file describes stable physical facts — it changes only if the
+# hardware itself changes.  Commit it; do not copy it per-machine.
 #
-# Both F9Ts enumerate as CDC ACM devices (/dev/ttyACM*).
-# Stable symlinks are provided by /etc/udev/rules.d/99-ublox-gnss.rules,
-# which matches each receiver by physical USB port (ID_PATH) so that
-# /dev/gnss-ref and /dev/gnss-dut survive reboots and replugs.
+# Receiver identity is by physical position (TOP / BOT), not by role.
+# Stable /dev symlinks are provided by:
+#   config/99-ublox-gnss.rules  →  /etc/udev/rules.d/99-ublox-gnss.rules
 #
-# gpsd is configured to hold ttyACM0. Stop it before running our scripts:
+# Per-run test assignments (which antenna/mount is on which receiver)
+# live in config/run.toml (gitignored).
+#
+# Stop gpsd before running any scripts:
 #   sudo systemctl stop gpsd gpsd.socket
-#
-# --- receiver vs antenna_mount ---
-# "label" identifies the receiver hardware (stays fixed across runs).
-# "antenna_mount" identifies the physical antenna+mount under test.
-# To separate receiver effects from antenna effects, run the same pair of
-# antenna_mounts twice with the receiver connections swapped between runs.
-# Both fields are written to every CSV row so post-hoc analysis can group
-# by either dimension.
 
-[receiver.A]
-port          = "/dev/gnss-ref"
-baud          = 115200
-label         = "REF"          # hardware: ZED-F9T-20B (no GLONASS)
-antenna_mount = "mount-A"      # change this to describe what is plugged in
+[receiver.TOP]
+port  = "/dev/gnss-top"
+baud  = 115200
+hw    = "ZED-F9T-20B"
+fw    = "TIM 2.25"
+note  = "no GLONASS (hardware limitation of -20B variant)"
 
-[receiver.B]
-port          = "/dev/gnss-dut"
-baud          = 115200
-label         = "DUT"          # hardware: ZED-F9T (with GLONASS)
-antenna_mount = "mount-B"      # change this to describe what is plugged in
+[receiver.BOT]
+port  = "/dev/gnss-bot"
+baud  = 115200
+hw    = "ZED-F9T"
+fw    = "TIM 2.20"
+note  = "has GLONASS"

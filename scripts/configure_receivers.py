@@ -26,7 +26,7 @@ Steps performed on each receiver:
   3. Configure      — CFG-VALSET (layers=RAM+BBR+Flash) for signal enables
 
 Usage:
-    python scripts/configure_receivers.py [--config config/local.toml]
+    python scripts/configure_receivers.py [--receivers config/receivers.toml]
 """
 
 import argparse
@@ -232,11 +232,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="Factory reset and configure ZED-F9T receivers for antenna testing"
     )
-    ap.add_argument("--config", default="config/local.toml",
-                    help="TOML config file (default: config/local.toml)")
+    ap.add_argument("--receivers", default="config/receivers.toml",
+                    help="Receiver hardware config (default: config/receivers.toml)")
     args = ap.parse_args()
 
-    cfg_path = Path(args.config)
+    cfg_path = Path(args.receivers)
     if not cfg_path.exists():
         print(f"Config not found: {cfg_path}")
         sys.exit(1)

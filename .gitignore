@@ -34,5 +34,5 @@ data/
 .DS_Store
 Thumbs.db
 
-# Config with secrets (port paths, credentials)
-config/local.toml
+# Per-run test config (antenna/mount assignments — edit before each run)
+config/run.toml
