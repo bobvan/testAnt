@@ -9,6 +9,7 @@ Usage:
 import argparse
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
@@ -197,6 +198,149 @@ def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
+_EL_BINS = list(range(0, 95, 5))   # [0, 5, 10, …, 90]
+_MIN_OBS = 10                      # minimum observations per bin to plot
+
+
+def _add_el_bin(df: pd.DataFrame) -> pd.DataFrame:
+    """Add el_bin_deg = lower edge of the 5° elevation bin."""
+    d = df.copy()
+    d["el_bin_deg"] = (d["elev_deg"] // 5 * 5).clip(0, 85).astype(int)
+    return d
+
+
+def plot_skyplot(df: pd.DataFrame, out_stem: Path) -> None:
+    """
+    Azimuth / elevation polar scatter coloured by C/N0.
+    One subplot per antenna_mount.  Zenith at centre, North up, clockwise.
+    """
+    if "elev_deg" not in df.columns or "azim_deg" not in df.columns:
+        return
+    sub = df.dropna(subset=["elev_deg", "azim_deg", "cno_dBHz"])
+    if sub.empty:
+        return
+
+    mounts = sorted(sub["antenna_mount"].unique())
+    vmin = sub["cno_dBHz"].quantile(0.02)
+    vmax = sub["cno_dBHz"].quantile(0.98)
+
+    fig, axes = plt.subplots(1, len(mounts),
+                             figsize=(6 * len(mounts), 6),
+                             subplot_kw={"projection": "polar"})
+    if len(mounts) == 1:
+        axes = [axes]
+
+    for ax, mount in zip(axes, mounts):
+        s = sub[sub["antenna_mount"] == mount]
+        theta = np.radians(s["azim_deg"].values)
+        r     = 90.0 - s["elev_deg"].values        # 0=zenith, 90=horizon
+        sc = ax.scatter(theta, r, c=s["cno_dBHz"].values,
+                        cmap="viridis", s=2, alpha=0.5,
+                        vmin=vmin, vmax=vmax)
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)                  # clockwise
+        ax.set_ylim(0, 90)
+        ax.set_yticks([0, 30, 60, 90])
+        ax.set_yticklabels(["90°", "60°", "30°", "0°"], fontsize=7)
+        ax.set_title(mount, fontsize=12, pad=15)
+        plt.colorbar(sc, ax=ax, label="C/N0 (dBHz)", fraction=0.046, pad=0.04)
+
+    fig.suptitle("Skyplot — satellite tracks coloured by C/N0\n"
+                 "(zenith at centre, N up, clockwise)", fontsize=11)
+    fig.tight_layout()
+    path = out_stem.parent / (out_stem.name + "_skyplot.png")
+    fig.savefig(path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Plot    → {path}")
+
+
+def plot_cno_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
+    """
+    Mean C/N0 ± 1σ vs elevation in 5° bins, per signal, antennas overlaid.
+    Isolates antenna gain pattern from sky geometry.
+    """
+    if "elev_deg" not in df.columns:
+        return
+    sig_col = "signal_id" if "signal_id" in df.columns else "gnss_id"
+    sub = _add_el_bin(df.dropna(subset=["elev_deg", "cno_dBHz"]))
+    if sub.empty:
+        return
+
+    mounts  = sorted(sub["antenna_mount"].unique())
+    signals = sorted(sub[sig_col].dropna().unique())
+    colors  = ["steelblue", "tomato", "seagreen", "darkorange"]
+
+    fig, axes = plt.subplots(len(signals), 1,
+                             figsize=(10, 3.5 * max(len(signals), 1)),
+                             sharex=True, squeeze=False)
+    for ax, sig in zip(axes[:, 0], signals):
+        for color, mount in zip(colors, mounts):
+            g = sub[(sub[sig_col] == sig) & (sub["antenna_mount"] == mount)]
+            stats = (g.groupby("el_bin_deg")["cno_dBHz"]
+                      .agg(mean="mean", std="std", n="count")
+                      .reset_index())
+            stats = stats[stats["n"] >= _MIN_OBS]
+            if stats.empty:
+                continue
+            ax.errorbar(stats["el_bin_deg"] + 2.5, stats["mean"],
+                        yerr=stats["std"], label=mount, color=color,
+                        linewidth=1.2, marker="o", markersize=3, capsize=3)
+        ax.set_ylabel("C/N0 (dBHz)")
+        ax.set_title(sig)
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    axes[-1, 0].set_xlabel("Elevation (°)")
+    fig.suptitle("C/N0 vs elevation (5° bins, mean ± 1σ)\n"
+                 "Isolates antenna gain pattern from sky geometry",
+                 fontsize=11, y=1.002)
+    fig.tight_layout()
+    path = out_stem.parent / (out_stem.name + "_cno_vs_elev.png")
+    fig.savefig(path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Plot    → {path}")
+
+
+def plot_used_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
+    """
+    Fraction of tracked satellites included in the timing solution vs elevation.
+    Reveals the effective elevation mask applied by the receiver.
+    """
+    if "elev_deg" not in df.columns or "used" not in df.columns:
+        return
+    sub = _add_el_bin(df.dropna(subset=["elev_deg"]))
+    if sub.empty:
+        return
+
+    mounts = sorted(sub["antenna_mount"].unique())
+    colors = ["steelblue", "tomato", "seagreen", "darkorange"]
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for color, mount in zip(colors, mounts):
+        g = sub[sub["antenna_mount"] == mount]
+        stats = (g.groupby("el_bin_deg")["used"]
+                   .agg(frac="mean", n="count")
+                   .reset_index())
+        stats = stats[stats["n"] >= _MIN_OBS]
+        if stats.empty:
+            continue
+        ax.plot(stats["el_bin_deg"] + 2.5, stats["frac"] * 100,
+                label=mount, color=color, linewidth=1.2, marker="o", markersize=3)
+
+    ax.set_xlabel("Elevation (°)")
+    ax.set_ylabel("Used (%)")
+    ax.set_ylim(0, 105)
+    ax.set_title("Fraction of visible satellites used in timing solution vs elevation\n"
+                 "(effective elevation mask applied by receiver)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    path = out_stem.parent / (out_stem.name + "_used_vs_elev.png")
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    print(f"Plot    → {path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
@@ -217,6 +361,9 @@ def main():
     plot_delta(epoch, out_stem)
     plot_satcount(epoch, out_stem)
     plot_by_signal(df, out_stem)
+    plot_skyplot(df, out_stem)
+    plot_cno_vs_elevation(df, out_stem)
+    plot_used_vs_elevation(df, out_stem)
     print("Done.")
 
 
