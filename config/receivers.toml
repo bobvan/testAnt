@@ -25,3 +25,8 @@ baud  = 115200
 hw    = "ZED-F9T"
 fw    = "TIM 2.20"
 note  = "has GLONASS"
+
+[ticc]
+port  = "/dev/ticc"
+baud  = 115200
+note  = "TAPR TICC; chA = TOP PPS, chB = BOT PPS"

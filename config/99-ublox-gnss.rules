@@ -1,4 +1,4 @@
-# Stable symlinks for the two u-blox F9T GNSS receivers.
+# Stable symlinks for the two u-blox F9T GNSS receivers and TAPR TICC.
 # Matched by physical USB port (ID_PATH), not by enumeration order,
 # so /dev/gnss-top and /dev/gnss-bot are stable across reboots and replugs.
 #
@@ -22,5 +22,13 @@ SUBSYSTEM=="tty", \
   ENV{ID_MODEL_ID}=="01a9", \
   ENV{ID_PATH}=="platform-xhci-hcd.0-usb-0:2:1.0", \
   SYMLINK+="gnss-top", \
+  MODE="0664", \
+  GROUP="dialout"
+
+# TAPR TICC time interval counter (Arduino Mega, matched by serial number)
+SUBSYSTEM=="tty", \
+  ENV{ID_VENDOR_ID}=="2341", \
+  ENV{ID_SERIAL_SHORT}=="95037323535351803130", \
+  SYMLINK+="ticc", \
   MODE="0664", \
   GROUP="dialout"
