@@ -57,6 +57,9 @@ _WAVELENGTH: dict[str, float] = {
 def load(csv_path: Path) -> pd.DataFrame:
     df = pd.read_csv(csv_path, parse_dates=["timestamp"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    # Compat: column was renamed locktime_ms → lock_duration_ms
+    if "locktime_ms" in df.columns:
+        df = df.rename(columns={"locktime_ms": "lock_duration_ms"})
     return df
 
 
@@ -78,6 +81,23 @@ def add_cmc(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_cmc_detrended(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add a 'cmc_detrended_m' column by subtracting each SV's mean CMC
+    (per receiver) from its raw CMC.
+
+    This removes the integer ambiguity offset (N·λ) and the receiver
+    hardware code-phase bias, which are both constant per SV per lock arc.
+    What remains is short-term code noise and multipath variability.
+    Only rows with a finite cmc_m value are detrended; others stay NaN.
+    """
+    df = df.copy()
+    per_sv_mean = (df.groupby(["receiver", "signal_id", "sv_id"])["cmc_m"]
+                     .transform("mean"))
+    df["cmc_detrended_m"] = df["cmc_m"] - per_sv_mean
+    return df
+
+
 def write_report(df: pd.DataFrame, out_stem: Path) -> None:
     lines = []
     a = lines.append
@@ -92,18 +112,21 @@ def write_report(df: pd.DataFrame, out_stem: Path) -> None:
     a(f"  Total rows (pr_valid): {len(df):,}")
     a("")
 
-    cmc_ok = df.dropna(subset=["cmc_m"])
+    cmc_ok = df.dropna(subset=["cmc_detrended_m"])
 
-    a("── CMC std dev by signal & receiver (noise floor) ──────────────")
-    a(f"  {'Signal':16s}  {'Receiver':8s}  {'N':>6s}  "
-      f"{'mean_m':>9s}  {'std_m':>8s}")
-    stats = (cmc_ok.groupby(["signal_id", "receiver"])["cmc_m"]
-               .agg(["count", "mean", "std"]).reset_index()
+    a("── Detrended CMC std dev by signal & receiver (noise floor) ────")
+    a(f"  {'Signal':16s}  {'Receiver':8s}  {'N_sv':>5s}  {'N_obs':>6s}  {'std_m':>8s}")
+    # Per-SV count and per-signal std of detrended CMC
+    sv_counts = (cmc_ok.groupby(["receiver", "signal_id"])["sv_id"]
+                       .nunique().rename("n_sv").reset_index())
+    stats = (cmc_ok.groupby(["signal_id", "receiver"])["cmc_detrended_m"]
+               .agg(n_obs="count", std="std").reset_index()
                .sort_values(["signal_id", "receiver"]))
+    stats = stats.merge(sv_counts, on=["receiver", "signal_id"])
     for _, row in stats.iterrows():
         a(f"  {row['signal_id']:16s}  {row['receiver']:8s}  "
-          f"{int(row['count']):>6d}  "
-          f"{row['mean']:>+9.3f}  {row['std']:>8.3f} m")
+          f"{int(row['n_sv']):>5d}  {int(row['n_obs']):>6d}  "
+          f"{row['std']:>8.3f} m")
     a("")
 
     a("── Lock duration stats by signal & receiver (ms) ───────────────")
@@ -124,8 +147,8 @@ def write_report(df: pd.DataFrame, out_stem: Path) -> None:
 
 
 def plot_cmc_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
-    """CMC time series per signal, receivers overlaid."""
-    cmc_ok = df.dropna(subset=["cmc_m"])
+    """Detrended CMC time series per signal, receivers overlaid."""
+    cmc_ok = df.dropna(subset=["cmc_detrended_m"])
     signals = sorted(cmc_ok["signal_id"].unique())
     if not signals:
         return
@@ -138,15 +161,15 @@ def plot_cmc_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
 
     for ax, sig in zip(axes[:, 0], signals):
         sub = cmc_ok[cmc_ok["signal_id"] == sig]
-        # Per-epoch mean CMC across all SVs, per receiver
-        epoch_mean = (sub.groupby(["timestamp", "receiver"])["cmc_m"]
-                        .median().reset_index())
+        epoch_med = (sub.groupby(["timestamp", "receiver"])["cmc_detrended_m"]
+                       .median().reset_index())
         for color, rx in zip(colors, receivers):
-            g = epoch_mean[epoch_mean["receiver"] == rx].sort_values("timestamp")
+            g = epoch_med[epoch_med["receiver"] == rx].sort_values("timestamp")
             if g.empty:
                 continue
-            ax.plot(g["timestamp"], g["cmc_m"], label=rx,
+            ax.plot(g["timestamp"], g["cmc_detrended_m"], label=rx,
                     linewidth=0.6, alpha=0.85, color=color)
+        ax.axhline(0, color="black", linewidth=0.5, linestyle=":")
         ax.set_ylabel("CMC (m)")
         ax.set_title(sig)
         ax.legend(fontsize=8)
@@ -154,7 +177,8 @@ def plot_cmc_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
 
     axes[-1, 0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     fig.autofmt_xdate()
-    fig.suptitle("Code-minus-carrier (CMC) by signal — epoch median across all SVs",
+    fig.suptitle("Detrended CMC by signal — epoch median across SVs\n"
+                 "(per-SV mean subtracted; integer ambiguity + hardware bias removed)",
                  fontsize=11, y=1.002)
     fig.tight_layout()
     path = out_stem.parent / (out_stem.name + "_cmc_by_signal.png")
@@ -164,52 +188,71 @@ def plot_cmc_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
 
 
 def plot_cmc_diff(df: pd.DataFrame, out_stem: Path) -> None:
-    """CMC_A − CMC_B per signal per SV — reveals receiver noise and bias."""
-    cmc_ok = df.dropna(subset=["cmc_m"])
+    """
+    Detrended CMC difference (rx_a − rx_b) matched per SV.
+
+    For each epoch and SV, subtract the two receivers' detrended CMC
+    values directly.  This cancels per-SV integer ambiguity offsets and
+    hardware biases, leaving only receiver noise and differential multipath.
+    """
+    cmc_ok = df.dropna(subset=["cmc_detrended_m"]).copy()
     receivers = sorted(cmc_ok["receiver"].unique())
     if len(receivers) < 2:
         return
     rx_a, rx_b = receivers[0], receivers[1]
 
-    signals = sorted(cmc_ok["signal_id"].unique())
+    signals = sorted(cmc_ok["signal_id"].dropna().unique())
     if not signals:
         return
+
+    # Floor timestamps to 1 s so threaded TOP/BOT epochs align
+    cmc_ok["ts_s"] = cmc_ok["timestamp"].dt.floor("s")
 
     n = len(signals)
     fig, axes = plt.subplots(n, 1, figsize=(14, 3 * n), sharex=True, squeeze=False)
 
     for ax, sig in zip(axes[:, 0], signals):
         sub = cmc_ok[cmc_ok["signal_id"] == sig]
-        # Per-epoch median CMC per receiver
-        ep = (sub.groupby(["timestamp", "receiver"])["cmc_m"]
-                 .median().reset_index())
-        ep["ts_s"] = ep["timestamp"].dt.floor("s")
-        ep2 = ep.groupby(["ts_s", "receiver"], as_index=False)["cmc_m"].median()
 
-        a = ep2[ep2["receiver"] == rx_a].set_index("ts_s")["cmc_m"]
-        b = ep2[ep2["receiver"] == rx_b].set_index("ts_s")["cmc_m"]
-        diff = (a - b).dropna().sort_index()
-        if diff.empty:
-            ax.set_title(f"{sig} — no overlapping epochs")
+        # Pivot to (ts_s, sv_id) × receiver — only rows present in both
+        piv = sub.pivot_table(
+            index=["ts_s", "sv_id"],
+            columns="receiver",
+            values="cmc_detrended_m",
+            aggfunc="median",
+        )
+        if rx_a not in piv.columns or rx_b not in piv.columns:
+            ax.set_title(f"{sig} — one receiver absent")
+            continue
+        piv = piv[[rx_a, rx_b]].dropna()
+        if piv.empty:
+            ax.set_title(f"{sig} — no matched SV/epoch pairs")
             continue
 
+        piv["diff"] = piv[rx_a] - piv[rx_b]
+        # Epoch median across all matched SVs
+        epoch_diff = piv.groupby("ts_s")["diff"].median().sort_index()
+        n_sv = int(piv.groupby("ts_s")["diff"].count().median())
+
         ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-        ax.fill_between(diff.index, diff.values, 0,
-                        where=diff.values >= 0, alpha=0.25, color="steelblue")
-        ax.fill_between(diff.index, diff.values, 0,
-                        where=diff.values < 0,  alpha=0.25, color="tomato")
-        ax.plot(diff.index, diff.rolling(60, min_periods=10).median(),
+        ax.fill_between(epoch_diff.index, epoch_diff.values, 0,
+                        where=epoch_diff.values >= 0, alpha=0.25, color="steelblue")
+        ax.fill_between(epoch_diff.index, epoch_diff.values, 0,
+                        where=epoch_diff.values < 0,  alpha=0.25, color="tomato")
+        ax.plot(epoch_diff.index,
+                epoch_diff.rolling(60, min_periods=10).median(),
                 color="navy", linewidth=1.0, label="60-s median")
         ax.set_ylabel("ΔCMC (m)")
-        ax.set_title(f"{sig}  —  {rx_a} − {rx_b}  CMC diff  "
-                     f"(std={diff.std():.3f} m)")
+        ax.set_title(f"{sig}  —  {rx_a} − {rx_b}  detrended CMC diff  "
+                     f"(std={epoch_diff.std():.3f} m, median {n_sv} SVs/epoch)")
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
 
     axes[-1, 0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     fig.autofmt_xdate()
-    fig.suptitle(f"CMC difference ({rx_a} − {rx_b}) by signal\n"
-                 "common-mode iono/clock cancelled; residual = receiver noise + multipath",
+    fig.suptitle(f"Detrended CMC difference ({rx_a} − {rx_b}) by signal\n"
+                 "per-SV matched; integer ambiguity + hardware bias cancelled; "
+                 "residual = receiver noise",
                  fontsize=11, y=1.002)
     fig.tight_layout()
     path = out_stem.parent / (out_stem.name + "_cmc_diff.png")
@@ -269,6 +312,10 @@ def main():
     df = add_cmc(df)
     n_cmc = df["cmc_m"].notna().sum()
     print(f"  {n_cmc:,} rows with valid CMC (cp_valid=1, half_cyc=1, known wavelength)")
+    df = add_cmc_detrended(df)
+    n_sv = df.dropna(subset=["cmc_detrended_m"]).groupby(
+        ["receiver", "signal_id"])["sv_id"].nunique().sum()
+    print(f"  detrended across {n_sv} (receiver, signal, SV) arcs")
 
     write_report(df, out_stem)
     plot_cmc_by_signal(df, out_stem)
