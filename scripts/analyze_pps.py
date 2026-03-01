@@ -63,12 +63,28 @@ def load_ticc(path: Path) -> pd.DataFrame:
     """
     Load TICC CSV and pair chA/chB edges by integer second.
 
+    Asserts that no edge timestamp is within 100 ns of a second boundary —
+    if both channels are > 100 ns clear, and the inter-channel delay is
+    < 100 ns (as expected for our setup), they will always share the same
+    integer second and the pivot is unambiguous.
+
     Returns DataFrame with columns:
         integer_sec, chA_ts, chB_ts, raw_diff_s
     Sorted by integer_sec; only seconds where both channels arrived.
     """
+    _BOUNDARY_GUARD_S = 100e-9   # 100 ns minimum distance from integer boundary
+
     df = pd.read_csv(path)
     df["integer_sec"] = df["timestamp_s"].astype(int)
+    frac = df["timestamp_s"] - df["integer_sec"]
+    bad  = (frac < _BOUNDARY_GUARD_S) | (frac > 1.0 - _BOUNDARY_GUARD_S)
+    if bad.any():
+        raise ValueError(
+            f"TICC: {bad.sum()} edge(s) within {_BOUNDARY_GUARD_S*1e9:.0f} ns "
+            f"of a second boundary — possible straddling artefact:\n"
+            f"{df[bad][['timestamp_s', 'channel']].to_string()}"
+        )
+
     piv = (
         df.pivot_table(index="integer_sec", columns="channel",
                        values="timestamp_s", aggfunc="first")
@@ -86,83 +102,122 @@ def load_timtp(path: Path) -> dict[str, pd.DataFrame]:
     """
     Load TIM-TP CSV.  Returns dict keyed by receiver ('TOP', 'BOT'),
     each a DataFrame sorted by timestamp with columns:
-        timestamp, qerr_ps, tow_ms, week
+        timestamp, qerr_ps, tow_ms, tow_s, week
+    tow_s is the integer GPS second (tow_ms // 1000).
     """
     df = pd.read_csv(path, parse_dates=["timestamp"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    df["tow_s"] = (df["tow_ms"] // 1000).astype(int)
     return {
         rx: grp.sort_values("timestamp").reset_index(drop=True)
         for rx, grp in df.groupby("receiver")
     }
 
 
+# ── GPS-second join ──────────────────────────────────────────────────── #
+
+def _gps_join(ticc: pd.DataFrame,
+              top_df: pd.DataFrame,
+              bot_df: pd.DataFrame,
+              gps_offset: int) -> pd.DataFrame:
+    """
+    Join TICC pairs with TIM-TP qErr by GPS second.
+
+    TICC integer_sec + gps_offset = GPS second S.
+    TIM-TP at tow_s = S−1 predicted the PPS edge at GPS second S,
+    so it supplies the qErr that corrects the TICC pair at GPS second S.
+
+    Returns a copy of ticc with added columns:
+        gps_sec, qerr_top_ps, qerr_bot_ps, utc_time
+    Rows where no matching TIM-TP entry exists are dropped.
+    """
+    df = ticc.copy()
+    df["gps_sec"] = df["integer_sec"] + gps_offset
+
+    top_q  = top_df.set_index("tow_s")["qerr_ps"]
+    bot_q  = bot_df.set_index("tow_s")["qerr_ps"]
+    top_ts = top_df.set_index("tow_s")["timestamp"]
+
+    # tow_s = GPS_second − 1 is the TIM-TP that predicted this PPS edge
+    corr_tow = df["gps_sec"] - 1
+    df["qerr_top_ps"] = corr_tow.map(top_q)
+    df["qerr_bot_ps"] = corr_tow.map(bot_q)
+    df["utc_time"]    = corr_tow.map(top_ts)
+
+    return df.dropna(subset=["qerr_top_ps", "qerr_bot_ps"]).reset_index(drop=True)
+
+
 # ── qErr alignment validation ────────────────────────────────────────── #
 
 def validate_alignment(ticc: pd.DataFrame,
-                       timtp: dict[str, pd.DataFrame]) -> list[tuple[int, float]]:
+                       timtp: dict[str, pd.DataFrame]) -> tuple:
     """
-    Confirm qErr alignment by trying pandas shifts of 0, 1, and 2
-    (corresponding to offsets of −1, 0 (expected), and +1 from the
-    nominal alignment).  The correct shift must yield the minimum std;
-    if it does not, the alignment is wrong.
+    Confirm qErr sign and GPS-second alignment.
 
-    Returns list of (offset_from_expected, std_ns) for each shift tried.
+    The naive GPS offset (tow_s_first − integer_sec_first) should give the
+    correct join.  We also try deltas of −1, +1, +2 relative to the naive
+    estimate to catch cases where the TICC started 1–2 edges before the
+    TIM-TP logger.
+
+    Expected: delta=0 (naive GPS offset), sign=+1
+              (corrected = measured + qerr_ps * 1e-12).
+
+    Returns (raw_std_ns, results, naive_offset) where results is a list of
+    (delta, sign, std_ns, n_pairs) for all 8 combinations.
     """
-    top = timtp.get("TOP", pd.DataFrame(columns=["qerr_ps"]))
-    bot = timtp.get("BOT", pd.DataFrame(columns=["qerr_ps"]))
-    raw_std_ns = (ticc["raw_diff_s"].dropna().std()) * 1e9
+    top = timtp.get("TOP", pd.DataFrame(columns=["qerr_ps", "tow_s"]))
+    bot = timtp.get("BOT", pd.DataFrame(columns=["qerr_ps", "tow_s"]))
+    raw_std_ns = float(ticc["raw_diff_s"].dropna().std() * 1e9)
+
+    if top.empty or bot.empty:
+        return raw_std_ns, [], 0
+
+    naive = int(top["tow_s"].iloc[0]) - int(ticc["integer_sec"].iloc[0])
 
     results = []
-    for shift in (0, 1, 2):
-        top_q = top["qerr_ps"].shift(shift).reset_index(drop=True)
-        bot_q = bot["qerr_ps"].shift(shift).reset_index(drop=True)
-        n = min(len(ticc), len(top_q), len(bot_q))
-        corr = (
-            (ticc["chA_ts"].iloc[:n].values - top_q.iloc[:n].values * 1e-12) -
-            (ticc["chB_ts"].iloc[:n].values - bot_q.iloc[:n].values * 1e-12)
-        )
-        results.append((shift - 1, float(np.nanstd(corr) * 1e9)))
+    for delta in (-1, 0, +1, +2):
+        joined = _gps_join(ticc, top, bot, naive + delta)
+        n = len(joined)
+        for sign in (+1, -1):
+            corr = ((joined["chA_ts"] + sign * joined["qerr_top_ps"] * 1e-12) -
+                    (joined["chB_ts"] + sign * joined["qerr_bot_ps"] * 1e-12))
+            std_ns = float(corr.std() * 1e9) if n > 1 else np.inf
+            results.append((delta, sign, std_ns, n))
 
-    return raw_std_ns, results
+    return raw_std_ns, results, naive
 
 
 # ── qErr correction ──────────────────────────────────────────────────── #
 
 def apply_qerr(ticc: pd.DataFrame,
-               timtp: dict[str, pd.DataFrame]) -> pd.DataFrame:
+               timtp: dict[str, pd.DataFrame],
+               gps_offset: int,
+               sign: int = +1) -> pd.DataFrame:
     """
-    Correct TICC timestamps with qErr from TIM-TP.
+    Correct TICC timestamps with qErr from TIM-TP using GPS-second join.
 
-    TIM-TP[i].qerr_ps predicts the quantization error of PPS edge i+1,
-    so TICC pair i is corrected by TIM-TP[i-1] (shift by 1).
-    The first TICC pair has no prior qErr and is dropped.
+    TICC integer_sec + gps_offset = GPS second S.
+    TIM-TP at tow_s = S−1 predicted the quantisation error of PPS edge S.
+
+    Sign convention: corrected = measured + sign * qerr_ps * 1e-12.
+    sign=+1 is the expected convention: positive qErr means the pulse fired
+    that many ps early; adding qerr moves the timestamp to the true boundary.
 
     Adds columns:
-        qerr_top_ps, qerr_bot_ps   — corrections applied (ps)
-        corr_diff_s                — qErr-corrected A−B difference (s)
-        utc_time                   — wall-clock UTC time from TOP TIM-TP
+        gps_sec                              — GPS second for each pair
+        qerr_top_ps, qerr_bot_ps            — corrections applied (ps)
+        corr_diff_s                          — qErr-corrected A−B (s)
+        utc_time                             — wall-clock UTC from TOP TIM-TP
     """
-    top = timtp.get("TOP", pd.DataFrame(columns=["qerr_ps", "timestamp"]))
-    bot = timtp.get("BOT", pd.DataFrame(columns=["qerr_ps"]))
+    top = timtp.get("TOP", pd.DataFrame(columns=["qerr_ps", "tow_s", "timestamp"]))
+    bot = timtp.get("BOT", pd.DataFrame(columns=["qerr_ps", "tow_s"]))
 
-    # Shift by 1: TIM-TP[i-1] corrects TICC[i]
-    top_qerr = top["qerr_ps"].shift(1).reset_index(drop=True)
-    bot_qerr = bot["qerr_ps"].shift(1).reset_index(drop=True)
-    top_utc  = top["timestamp"].reset_index(drop=True)   # no shift: TIM-TP[i] ≈ wall time of edge i
-
-    n_use = min(len(ticc), len(top_qerr), len(bot_qerr), len(top_utc))
-    df = ticc.iloc[:n_use].copy()
-    df["qerr_top_ps"] = top_qerr.iloc[:n_use].values
-    df["qerr_bot_ps"] = bot_qerr.iloc[:n_use].values
-    df["utc_time"]    = top_utc.iloc[:n_use].values
-
+    df = _gps_join(ticc, top, bot, gps_offset)
     df["corr_diff_s"] = (
-        (df["chA_ts"] - df["qerr_top_ps"] * 1e-12) -
-        (df["chB_ts"] - df["qerr_bot_ps"] * 1e-12)
+        (df["chA_ts"] + sign * df["qerr_top_ps"] * 1e-12) -
+        (df["chB_ts"] + sign * df["qerr_bot_ps"] * 1e-12)
     )
-
-    # Drop the first row — it has no prior qErr
-    return df.dropna(subset=["qerr_top_ps", "qerr_bot_ps"]).reset_index(drop=True)
+    return df
 
 
 # ── ADEV / TDEV ──────────────────────────────────────────────────────── #
@@ -205,17 +260,22 @@ def write_report(df: pd.DataFrame,
     a(f"  Pairs    : {len(df)}  (chA=TOP, chB=BOT)")
     a("")
 
-    raw_std_ns, align_results = alignment
-    best_offset = min(align_results, key=lambda x: x[1])[0]
-    a("── qErr alignment check ─────────────────────────────────")
-    a(f"  {'Offset':>8s}  {'std (ns)':>10s}")
-    a(f"  {'(raw)':>8s}  {raw_std_ns:>10.3f}")
-    for offset, std_ns in align_results:
-        tag = " ← expected" if offset == 0 else ""
-        warn = " ← WARNING: not minimum!" if offset != 0 and std_ns == min(s for _, s in align_results) else ""
-        a(f"  {offset:>+8d}  {std_ns:>10.3f}{tag}{warn}")
-    if best_offset != 0:
-        a(f"  *** ALIGNMENT ERROR: minimum std at offset {best_offset:+d}, not 0 ***")
+    raw_std_ns, align_results, naive_offset = alignment
+    best = min(align_results, key=lambda x: x[2])
+    a("── qErr alignment check (GPS offset delta from naive, sign) ──────")
+    a(f"  {'GPS Δ':>6s}  {'Sign':>5s}  {'N pairs':>7s}  {'std (ns)':>10s}")
+    a(f"  {'(raw)':>6s}  {'':>5s}  {'':>7s}  {raw_std_ns:>10.3f}")
+    for delta, sign, std_ns, n_pairs in align_results:
+        tags = []
+        if delta == 0 and sign == +1:
+            tags.append("← naive")
+        if delta == best[0] and sign == best[1]:
+            tags.append("← best")
+        tag = "  " + " ".join(tags) if tags else ""
+        a(f"  {delta:>+6d}  {sign:>+5d}  {n_pairs:>7d}  {std_ns:>10.3f}{tag}")
+    if best[0] != 0 or best[1] != +1:
+        a(f"  *** GPS offset delta={best[0]:+d} sign={best[1]:+d} "
+          f"(GPS offset={naive_offset + best[0]}) ***")
     a("")
 
     a("── Raw A−B difference (chA − chB) ───────────────────────")
@@ -459,20 +519,27 @@ def main():
 
     print("Validating qErr alignment …")
     alignment = validate_alignment(ticc, timtp)
-    raw_std_ns, align_results = alignment
-    print(f"  {'Offset':>8s}  {'std (ns)':>10s}")
-    print(f"  {'(raw)':>8s}  {raw_std_ns:>10.3f}")
-    best_offset = min(align_results, key=lambda x: x[1])[0]
-    for offset, std_ns in align_results:
-        tag = " ← expected" if offset == 0 else ""
-        print(f"  {offset:>+8d}  {std_ns:>10.3f}{tag}")
-    if best_offset != 0:
-        print(f"  *** ALIGNMENT ERROR: minimum std at offset {best_offset:+d} ***",
-              file=sys.stderr)
+    raw_std_ns, align_results, naive_offset = alignment
+    best = min(align_results, key=lambda x: x[2])
+    best_delta, best_sign, best_std, best_n = best
+    best_gps_offset = naive_offset + best_delta
+    print(f"  {'GPS Δ':>6s}  {'Sign':>5s}  {'N pairs':>7s}  {'std (ns)':>10s}")
+    print(f"  {'(raw)':>6s}  {'':>5s}  {'':>7s}  {raw_std_ns:>10.3f}")
+    for delta, sign, std_ns, n_pairs in align_results:
+        tags = []
+        if delta == 0 and sign == +1:
+            tags.append("← naive")
+        if delta == best_delta and sign == best_sign:
+            tags.append("← best")
+        tag = "  " + " ".join(tags) if tags else ""
+        print(f"  {delta:>+6d}  {sign:>+5d}  {n_pairs:>7d}  {std_ns:>10.3f}{tag}")
+    if best_delta != 0 or best_sign != +1:
+        print(f"  *** ALIGNMENT: GPS offset delta={best_delta:+d}, sign={best_sign:+d} "
+              f"(using GPS offset={best_gps_offset}) ***", file=sys.stderr)
 
     print("Applying qErr correction …")
-    df = apply_qerr(ticc, timtp)
-    print(f"  {len(df)} pairs after correction")
+    df = apply_qerr(ticc, timtp, gps_offset=best_gps_offset, sign=best_sign)
+    print(f"  {len(df)} pairs after correction (GPS offset={best_gps_offset}, sign={best_sign:+d})")
     raw_ns  = df["raw_diff_s"]  * 1e9
     corr_ns = df["corr_diff_s"] * 1e9
     print(f"  Raw  : mean={raw_ns.mean():+.2f} ns  std={raw_ns.std():.2f} ns")
