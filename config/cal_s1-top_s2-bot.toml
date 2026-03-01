@@ -1,0 +1,21 @@
+# Calibration config: splitter copy 1 → TOP, splitter copy 2 → BOT.
+#
+# Used in conjunction with cal_s1-bot_s2-top.toml to separate receiver
+# hardware bias from any asymmetry in the splitter itself.
+#
+# After both configs have been run:
+#   delta_receiver = (delta_s1top + delta_s1bot) / 2   (pure hardware offset)
+#   delta_splitter = (delta_s1top - delta_s1bot) / 2   (splitter asymmetry)
+
+[run]
+description = "calibration: splitter copy 1 on TOP, copy 2 on BOT"
+
+[antenna.copy1]
+label      = "split-copy1"
+mount_site = "splitter"
+receiver   = "TOP"
+
+[antenna.copy2]
+label      = "split-copy2"
+mount_site = "splitter"
+receiver   = "BOT"

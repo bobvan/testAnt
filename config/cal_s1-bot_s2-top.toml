@@ -1,0 +1,17 @@
+# Calibration config: splitter copy 1 → BOT, splitter copy 2 → TOP.
+#
+# The swap of cal_s1-top_s2-bot.toml. Running both configs lets you
+# separate receiver hardware bias from splitter port asymmetry.
+
+[run]
+description = "calibration: splitter copy 1 on BOT, copy 2 on TOP"
+
+[antenna.copy1]
+label      = "split-copy1"
+mount_site = "splitter"
+receiver   = "BOT"
+
+[antenna.copy2]
+label      = "split-copy2"
+mount_site = "splitter"
+receiver   = "TOP"
