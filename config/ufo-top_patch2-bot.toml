@@ -1,0 +1,15 @@
+# Sensitivity test: UFO (SPK6618H) on TOP, Patch2 (ANN-MB2) on BOT.
+# Cable swap of ufo-bot_patch2-top.toml — isolates antenna effect from receiver bias.
+
+[run]
+description = "sensitivity test: UFO on TOP, Patch2 on BOT"
+
+[antenna.A]
+label      = "UFO"
+mount_site = "test"
+receiver   = "TOP"
+
+[antenna.B]
+label      = "Patch2"
+mount_site = "test"
+receiver   = "BOT"
