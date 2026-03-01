@@ -30,6 +30,8 @@ except ImportError:
 from testant.receiver import Receiver
 from testant.snr import GsvAccumulator, snapshot_from_navsat
 from testant.logger import SnapshotLogger
+from testant.rawx import snapshot_from_rawx
+from testant.rawx_logger import RawxLogger
 
 
 def load_toml(path: Path) -> dict:
@@ -62,13 +64,14 @@ def build_thread_configs(receivers: dict, run: dict) -> list[dict]:
     return result
 
 
-def reader_thread(cfg: dict, logger: SnapshotLogger, stop: threading.Event):
-    receiver     = cfg["receiver"]
-    port         = cfg["port"]
-    baud         = cfg["baud"]
+def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
+                  stop: threading.Event):
+    receiver      = cfg["receiver"]
+    port          = cfg["port"]
+    baud          = cfg["baud"]
     antenna_mount = cfg["antenna_mount"]
-    mount_site   = cfg["mount_site"]
-    acc          = GsvAccumulator(receiver, antenna_mount=antenna_mount, mount_site=mount_site)
+    mount_site    = cfg["mount_site"]
+    acc           = GsvAccumulator(receiver, antenna_mount=antenna_mount, mount_site=mount_site)
 
     while not stop.is_set():
         try:
@@ -83,6 +86,13 @@ def reader_thread(cfg: dict, logger: SnapshotLogger, stop: threading.Event):
                         snap = snapshot_from_navsat(msg, label=receiver, timestamp=ts,
                                                     antenna_mount=antenna_mount,
                                                     mount_site=mount_site)
+                    elif identity == "RXM-RAWX":
+                        ts   = datetime.now(tz=timezone.utc)
+                        meas = snapshot_from_rawx(msg, label=receiver,
+                                                  antenna_mount=antenna_mount,
+                                                  timestamp=ts)
+                        rawx_logger.write(ts, receiver, antenna_mount, meas)
+                        snap = None
                     else:
                         snap = acc.feed(msg)
 
@@ -132,22 +142,25 @@ def main():
     if desc:
         print(f"Run: {desc}")
 
-    out_path = Path(args.out)
+    out_path  = Path(args.out)
+    rawx_path = Path(str(out_path.with_suffix("")) + "_rawx.csv")
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     stop = threading.Event()
-    with SnapshotLogger(out_path) as logger:
+    with SnapshotLogger(out_path) as logger, RawxLogger(rawx_path) as rawx_logger:
         threads = []
         for cfg in thread_cfgs:
             t = threading.Thread(
                 target=reader_thread,
-                args=(cfg, logger, stop),
+                args=(cfg, logger, rawx_logger, stop),
                 daemon=True,
             )
             threads.append(t)
             t.start()
 
-        print(f"Logging to {out_path} — press Ctrl-C to stop.")
+        print(f"Logging C/N0  → {out_path}")
+        print(f"Logging RAWX  → {rawx_path}")
+        print("Press Ctrl-C to stop.")
         try:
             for t in threads:
                 t.join()
