@@ -1,0 +1,14 @@
+# Sensitivity test: UFO (unknown) on BOT, Patch2 on TOP.
+
+[run]
+description = "sensitivity test: UFO on BOT, Patch2 on TOP"
+
+[antenna.A]
+label      = "UFO"
+mount_site = "test"
+receiver   = "BOT"
+
+[antenna.B]
+label      = "Patch2"
+mount_site = "test"
+receiver   = "TOP"
