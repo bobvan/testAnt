@@ -46,9 +46,10 @@ run_session() {
 if [[ "$BG" == "--bg" ]]; then
     nohup bash -c "
         source ~/.bashrc 2>/dev/null || true
-        cd $(pwd)
-        $(declare -f run_session)
-        run_session
+        cd '$(pwd)'
+        timeout '$DURATION' python scripts/log_snr.py --run '$RUN_CONFIG' --out '$CSV' || \
+            [[ \$? -eq 124 ]] || exit 1
+        python scripts/analyze_snr.py --csv '$CSV' --out '$STEM'
     " > "$LOG" 2>&1 &
     echo "PID      : $!"
     echo "Tail log : tail -f $LOG"
