@@ -2,15 +2,28 @@
 """
 configure_receivers.py — Factory reset and configure both ZED-F9T receivers.
 
-Hardware: ZED-F9T-20B (FWVER=TIM 2.25, PROTVER=29.25)
-Supported constellations: GPS, Galileo, BeiDou, SBAS, QZSS, NavIC  (no GLONASS)
+Hardware:
+  REF — ZED-F9T-20B (FWVER=TIM 2.25): GPS, Galileo, BeiDou, SBAS, QZSS, NavIC  (no GLONASS)
+  DUT — ZED-F9T     (FWVER=TIM 2.20): GPS, GLONASS, Galileo, BeiDou, SBAS, QZSS, NavIC
+
+Both receivers are configured to the same constellation set — the smallest common
+subset — so that neither has a constellation advantage over the other:
+
+    ON : GPS (L1C/A), Galileo (E1), BeiDou (B1I)
+    OFF: GLONASS, SBAS, QZSS (Japanese), NavIC (Indian)
+
+GLONASS is explicitly disabled on both.  On REF (no GLONASS hardware) the
+disable message is expected to NAK and that is treated as benign — the receiver
+has no GLONASS to enable anyway.  On DUT, whose ROM defaults have GLONASS on,
+the disable is required.
+
+NOTE: L2 signal keys (GPS_L2C, GAL_E5B, BDS_B2, GLO_L2) are firmware-locked
+and NAK'd on all known TIM firmware variants.
 
 Steps performed on each receiver:
   1. Factory reset  — CFG-CFG (clear + save ROM defaults to flash) + CFG-RST cold start
   2. Reconnect      — wait for USB device to reappear
-  3. Configure      — CFG-VALSET (layers=RAM+BBR+Flash) for signal enables:
-                        ON : GPS (L1+L2), Galileo (E1+E5b), BeiDou (B1+B2)
-                        OFF: SBAS, QZSS (Japanese), NavIC (Indian)
+  3. Configure      — CFG-VALSET (layers=RAM+BBR+Flash) for signal enables
 
 Usage:
     python scripts/configure_receivers.py [--config config/local.toml]
@@ -45,11 +58,12 @@ _MASK_NONE = struct.pack("<I", 0x0000_0000)
 # ── constellation / signal configuration ───────────────────────────── #
 # layers=7 → RAM(1) | BBR(2) | Flash(4) — survives power cycling.
 #
-# The ZED-F9T-20B does NOT support GLONASS (confirmed via MON-VER).
-# Constellations available: GPS, GAL, BDS, SBAS, QZSS, NavIC.
+# Target: GPS + GAL + BDS on both receivers (smallest common subset).
+# GLONASS is off even on DUT, which supports it, so that constellation
+# composition is identical and neither receiver has a satellite-count advantage.
 #
-# User intent: ON = GPS, GAL, BDS.  OFF = SBAS, QZSS (Japanese), NavIC (Indian).
-# GLONASS may be added later if a GLO-capable variant is used.
+# NOTE: L2 signal keys (GPS_L2C, GAL_E5B, BDS_B2, GLO_L2) are NAK'd on all
+# known TIM firmware variants — firmware-locked, L1-only signals are effective.
 LAYERS = 7
 
 SIGNAL_CONFIG = [
@@ -68,9 +82,15 @@ SIGNAL_CONFIG = [
     ("CFG_SIGNAL_QZSS_ENA",      0),
     # NavIC / IRNSS ── off (Indian regional)
     ("CFG_SIGNAL_NAVIC_ENA",     0),
-    # NOTE: GPS_L2C, GAL_E5B, BDS_B2 keys are consistently NAK'd by the
-    # ZED-F9T-20B TIM 2.25 firmware — L2/dual-frequency signals appear to be
-    # firmware-locked and cannot be toggled via CFG-VALSET on this variant.
+]
+
+# Sent as a separate CFG-VALSET to ensure GLONASS is off on both receivers.
+# DUT (ZED-F9T) has GLONASS enabled in its ROM defaults, so this is required
+# there.  REF (ZED-F9T-20B) lacks GLONASS hardware and will NAK these keys —
+# that NAK is benign and is logged but does not abort configuration.
+GLO_DISABLE_CONFIG = [
+    ("CFG_SIGNAL_GLO_ENA",    0),
+    ("CFG_SIGNAL_GLO_L1_ENA", 0),
 ]
 
 
@@ -137,13 +157,26 @@ def factory_reset(ser: serial.Serial) -> None:
 # ── constellation configuration ─────────────────────────────────────── #
 
 def configure_signals(ser: serial.Serial, rdr: UBXReader) -> bool:
-    """Apply SIGNAL_CONFIG via CFG-VALSET, writing to RAM + BBR + Flash."""
+    """Apply SIGNAL_CONFIG then GLO_DISABLE_CONFIG via CFG-VALSET."""
     msg = UBXMessage.config_set(
         layers=LAYERS,
         transaction=0,
         cfgData=SIGNAL_CONFIG,
     )
-    return send_cfg(ser, rdr, msg, "CFG-VALSET signal config")
+    ok = send_cfg(ser, rdr, msg, "CFG-VALSET signal config")
+
+    # Disable GLONASS explicitly.  A NAK here is expected on REF (no GLO
+    # hardware) and is treated as benign — GLO was already off.
+    glo_msg = UBXMessage.config_set(
+        layers=LAYERS,
+        transaction=0,
+        cfgData=GLO_DISABLE_CONFIG,
+    )
+    glo_ok = send_cfg(ser, rdr, glo_msg, "CFG-VALSET GLO disable")
+    if not glo_ok:
+        print("    (GLO disable NAK'd — no GLONASS hardware on this receiver, GLO already off)")
+
+    return ok
 
 
 # ── per-receiver orchestration ──────────────────────────────────────── #
@@ -185,7 +218,7 @@ def configure_one(label: str, port: str, baud: int) -> None:
 
     # ── Step 3: configure signals ──────────────────────────────────── #
     print("\n[3] Configure constellations")
-    for key, val in SIGNAL_CONFIG:
+    for key, val in SIGNAL_CONFIG + GLO_DISABLE_CONFIG:
         state = "ON " if val else "OFF"
         print(f"    {state}  {key}")
 

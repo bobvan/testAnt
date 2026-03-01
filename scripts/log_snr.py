@@ -41,26 +41,35 @@ def reader_thread(cfg: dict, label: str, logger: SnapshotLogger, stop: threading
     label = cfg.get("label", label)
     acc   = GsvAccumulator(label)
 
-    with Receiver(port=port, baud=baud, label=label) as rx:
-        for _raw, msg in rx:
+    while not stop.is_set():
+        try:
+            with Receiver(port=port, baud=baud, label=label) as rx:
+                for _raw, msg in rx:
+                    if stop.is_set():
+                        break
+                    identity = getattr(msg, "identity", "")
+
+                    if identity == "NAV-SAT":
+                        ts   = datetime.now(tz=timezone.utc)
+                        snap = snapshot_from_navsat(msg, label=label, timestamp=ts)
+                    else:
+                        snap = acc.feed(msg)
+
+                    if snap is not None:
+                        logger.write(snap)
+                        ts = snap.timestamp
+                        print(
+                            f"[{ts.strftime('%H:%M:%S')}] {label:6s} "
+                            f"sats={snap.count:2d} used={snap.used_count:2d} "
+                            f"mean_C/N0={snap.mean_cno:.1f} dBHz",
+                            flush=True,
+                        )
+        except Exception as exc:
             if stop.is_set():
                 break
-            identity = getattr(msg, "identity", "")
-
-            if identity == "NAV-SAT":
-                ts   = datetime.now(tz=timezone.utc)
-                snap = snapshot_from_navsat(msg, label=label, timestamp=ts)
-            else:
-                snap = acc.feed(msg)
-
-            if snap is not None:
-                logger.write(snap)
-                ts = snap.timestamp
-                print(
-                    f"[{ts.strftime('%H:%M:%S')}] {label:6s} "
-                    f"sats={snap.count:2d} used={snap.used_count:2d} "
-                    f"mean_C/N0={snap.mean_cno:.1f} dBHz"
-                )
+            print(f"[{label}] serial error: {exc} — reconnecting in 3s", flush=True)
+            import time
+            time.sleep(3)
 
 
 def main():

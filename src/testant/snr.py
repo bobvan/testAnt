@@ -153,4 +153,15 @@ class GsvAccumulator:
             partial = snapshot_from_gsv([msg], self.label, ts)
             snap.satellites.extend(partial.satellites)
         self._buffer.clear()
+
+        # The F9T emits one GSV group per signal band (signalID), so a
+        # satellite tracked on two signals appears twice with the same sv_id.
+        # Keep only the highest C/N0 observation per (gnss_id, sv_id) pair.
+        best: dict[tuple, SatInfo] = {}
+        for s in snap.satellites:
+            key = (s.gnss_id, s.sv_id)
+            if key not in best or s.cno > best[key].cno:
+                best[key] = s
+        snap.satellites = list(best.values())
+
         return snap
