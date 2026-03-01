@@ -115,8 +115,12 @@ def plot_cno(epoch: pd.DataFrame, out_stem: Path) -> None:
 
 
 def plot_delta(epoch: pd.DataFrame, out_stem: Path) -> None:
-    ref = epoch[epoch["receiver"] == "REF"].set_index("timestamp")["mean_cno"]
-    dut = epoch[epoch["receiver"] == "DUT"].set_index("timestamp")["mean_cno"]
+    # REF and DUT are stamped independently; floor to 1s so the join works.
+    e = epoch.copy()
+    e["timestamp"] = e["timestamp"].dt.floor("s")
+    e = e.groupby(["timestamp", "receiver"], as_index=False)["mean_cno"].mean()
+    ref = e[e["receiver"] == "REF"].set_index("timestamp")["mean_cno"]
+    dut = e[e["receiver"] == "DUT"].set_index("timestamp")["mean_cno"]
     delta = (ref - dut).dropna().sort_index()
     if delta.empty:
         return
