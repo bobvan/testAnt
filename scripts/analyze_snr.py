@@ -270,6 +270,19 @@ def plot_cno_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
     signals = sorted(sub[sig_col].dropna().unique())
     colors  = ["steelblue", "tomato", "seagreen", "darkorange"]
 
+    # Global y range so all signal panels share the same scale
+    all_stats = (sub.groupby([sig_col, "antenna_mount", "el_bin_deg"])["cno_dBHz"]
+                   .agg(mean="mean", std="std", n="count")
+                   .reset_index())
+    all_stats = all_stats[all_stats["n"] >= _MIN_OBS]
+    if not all_stats.empty:
+        ymin = (all_stats["mean"] - all_stats["std"]).min()
+        ymax = (all_stats["mean"] + all_stats["std"]).max()
+        pad  = (ymax - ymin) * 0.08
+        ylim = (ymin - pad, ymax + pad)
+    else:
+        ylim = None
+
     fig, axes = plt.subplots(len(signals), 1,
                              figsize=(10, 3.5 * max(len(signals), 1)),
                              sharex=True, squeeze=False)
@@ -285,6 +298,8 @@ def plot_cno_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
             ax.errorbar(stats["el_bin_deg"] + 2.5, stats["mean"],
                         yerr=stats["std"], label=mount, color=color,
                         linewidth=1.2, marker="o", markersize=3, capsize=3)
+        if ylim:
+            ax.set_ylim(ylim)
         ax.set_ylabel("C/N0 (dBHz)")
         ax.set_title(sig)
         ax.legend(fontsize=8)
