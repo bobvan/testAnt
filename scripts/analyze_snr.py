@@ -323,6 +323,9 @@ def plot_used_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
     """
     if "elev_deg" not in df.columns or "used" not in df.columns:
         return
+    if not df["used"].any():
+        print("Skip    → used_vs_elev (used flag always 0 — needs UBX NAV-SAT output enabled)")
+        return
     sub = _add_el_bin(df.dropna(subset=["elev_deg"]))
     if sub.empty:
         return

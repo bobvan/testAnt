@@ -96,6 +96,8 @@ SIGNAL_CONFIG = [
     ("CFG_MSGOUT_UBX_RXM_RAWX_USB", 1),
     # Enable UBX-TIM-TP output at 1 Hz on USB (qErr field corrects TICC sawtooth)
     ("CFG_MSGOUT_UBX_TIM_TP_USB",   1),
+    # Enable UBX-NAV-SAT output at 1 Hz on USB (svUsed flag for used_vs_elev plot)
+    ("CFG_MSGOUT_UBX_NAV_SAT_USB",  1),
 ]
 
 # Sent as a separate CFG-VALSET to ensure GLONASS is off on both receivers.
