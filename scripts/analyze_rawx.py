@@ -18,6 +18,7 @@ Outputs (all suffixed onto <out>):
     _cmc_vs_elev.png      — detrended CMC std vs elevation (requires --snr)
     _cmc_skyplot.png      — |CMC| polar map by direction (requires --snr)
     _slip_timeline.png    — cycle slip raster (colour=signal, shape=antenna, size=severity)
+    _slip_quality.png     — slip rate vs C/N0 and elevation bins (normalised by exposure)
 """
 
 import argparse
@@ -185,6 +186,13 @@ def detect_cycle_slips(df: pd.DataFrame,
             s["lock_before_ms"] = float(lock.iloc[idx - 1])
             s["lock_after_ms"]  = float(lock.iloc[idx])
             s["drop_ms"]        = float(drop.iloc[idx])
+            # Signal quality at the last good epoch before the slip
+            s["cno_before"] = (float(grp["cno_dBHz"].iloc[idx - 1])
+                               if "cno_dBHz" in grp.columns else float("nan"))
+            s["elev_before"] = (float(grp["elev_deg"].iloc[idx - 1])
+                                if "elev_deg" in grp.columns
+                                and not pd.isna(grp["elev_deg"].iloc[idx - 1])
+                                else float("nan"))
             slips.append(s)
 
     return pd.DataFrame(slips)
@@ -273,6 +281,25 @@ def write_report(df: pd.DataFrame, slips: pd.DataFrame,
         a(f"  Total: {total_slips} slips in {total_track_h:.2f} SV-hours  "
           f"→  {overall_rate:.1f} slips/24 h (all signals combined)")
         a("")
+        # Quality-filtered slip counts
+        if "cno_before" in slips.columns:
+            hi_cno  = slips["cno_before"] > 35.0
+            hi_elev = (slips["elev_before"] > 30.0
+                       if "elev_before" in slips.columns
+                       else pd.Series(True, index=slips.index))
+            hi_both = hi_cno & hi_elev.fillna(True)
+            a("── Slips on strong / high-elevation SVs ─────────────────────")
+            a("  (C/N0 > 35 dBHz AND elevation > 30° — these matter most)")
+            a(f"  {'Antenna':12s}  {'Total':>6s}  {'>35dBHz':>8s}  {'>30° elev':>10s}  {'Both':>6s}")
+            for ant in sorted(slips["antenna_mount"].dropna().unique()):
+                m = slips["antenna_mount"] == ant
+                a(f"  {ant:12s}  "
+                  f"{m.sum():>6d}  "
+                  f"{(m & hi_cno).sum():>8d}  "
+                  f"{(m & hi_elev.fillna(False)).sum():>10d}  "
+                  f"{(m & hi_both).sum():>6d}")
+            a("")
+
         a("  10 largest slips:")
         a(f"  {'Timestamp':26s}  {'Rx':5s}  {'Sig':14s}  SV  "
           f"{'Before ms':>10s}  {'After ms':>9s}  {'Drop ms':>8s}")
@@ -674,6 +701,159 @@ def plot_cycle_slip_timeline(slips: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
+def plot_slip_quality(df: pd.DataFrame, slips: pd.DataFrame,
+                     out_stem: Path) -> None:
+    """
+    Slip rate normalised by tracking exposure, broken down by C/N0 and
+    elevation bins.  Answers: are the excess slips on weak / low-elevation
+    SVs (expected, low impact) or on strong / high-elevation SVs (real
+    antenna quality problem)?
+
+    Panel layout (2 × 2):
+      [0,0] Slip rate (per SV-hour) vs C/N0 bin — bars per antenna
+      [0,1] Scatter of (elevation, C/N0) at slip time — one point per slip
+      [1,0] Slip rate (per SV-hour) vs elevation bin — bars per antenna
+      [1,1] Cumulative slip fraction vs elevation — steep rise at low
+             elevation is expected; a high-elevation tail is a red flag
+    Bottom row requires elevation data (--snr); omitted otherwise.
+    """
+    if slips.empty or "cno_before" not in slips.columns:
+        return
+
+    ants      = sorted(slips["antenna_mount"].dropna().unique())
+    _COLORS   = ["steelblue", "tomato", "seagreen", "darkorange"]
+    _MARKERS  = ["o", "s", "^", "D"]
+    ant_color  = {a: _COLORS[i % len(_COLORS)]  for i, a in enumerate(ants)}
+    ant_marker = {a: _MARKERS[i % len(_MARKERS)] for i, a in enumerate(ants)}
+
+    has_elev = ("elev_before" in slips.columns
+                and slips["elev_before"].notna().any()
+                and "elev_deg" in df.columns)
+
+    # ── binning definitions ───────────────────────────────────────────
+    cno_edges  = [0,  25, 30, 35, 40, 45, 100]
+    cno_labels = ["<25", "25-30", "30-35", "35-40", "40-45", ">45"]
+    el_edges   = [0, 10, 20, 30, 45, 60, 91]
+    el_labels  = ["0-10", "10-20", "20-30", "30-45", "45-60", ">60"]
+
+    def bar_rate(ax, merged, bin_col, labels, ant_list):
+        """Draw grouped bars of slip rate per SV-hour."""
+        x     = np.arange(len(labels))
+        width = 0.8 / max(len(ant_list), 1)
+        for i, ant in enumerate(ant_list):
+            sub   = merged[merged["antenna_mount"] == ant].set_index(bin_col)
+            rates = [float(sub.loc[lbl, "rate"]) if lbl in sub.index else 0.0
+                     for lbl in labels]
+            ax.bar(x + i * width - (len(ant_list) - 1) * width / 2,
+                   rates, width=width * 0.9,
+                   color=ant_color[ant], label=ant, alpha=0.85)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=8)
+        ax.legend(fontsize=8)
+        ax.grid(axis="y", alpha=0.3)
+        ax.set_ylabel("Slips / SV-hour")
+
+    # ── C/N0 exposure and slip counts ─────────────────────────────────
+    df_c                = df.copy()
+    df_c["cno_bin"]     = pd.cut(df_c["cno_dBHz"],        cno_edges,
+                                 labels=cno_labels, right=False)
+    slips_c             = slips.dropna(subset=["cno_before"]).copy()
+    slips_c["cno_bin"]  = pd.cut(slips_c["cno_before"],   cno_edges,
+                                 labels=cno_labels, right=False)
+    exp_cno   = (df_c.groupby(["antenna_mount", "cno_bin"], observed=True)
+                     .size().rename("n_epochs").reset_index())
+    cnt_cno   = (slips_c.groupby(["antenna_mount", "cno_bin"], observed=True)
+                        .size().rename("n_slips").reset_index())
+    mgd_cno   = exp_cno.merge(cnt_cno, on=["antenna_mount", "cno_bin"], how="left")
+    mgd_cno["n_slips"] = mgd_cno["n_slips"].fillna(0)
+    mgd_cno["rate"]    = mgd_cno["n_slips"] / (mgd_cno["n_epochs"] / 3600.0)
+
+    n_rows = 2 if has_elev else 1
+    fig, axes = plt.subplots(n_rows, 2,
+                             figsize=(14, 5 * n_rows),
+                             squeeze=False)
+
+    # ── [0,0] slip rate vs C/N0 ───────────────────────────────────────
+    bar_rate(axes[0, 0], mgd_cno, "cno_bin", cno_labels, ants)
+    axes[0, 0].set_xlabel("C/N0 at last good epoch before slip (dBHz)")
+    axes[0, 0].set_title("Slip rate vs C/N0\n(normalised by tracking exposure)")
+
+    # ── [0,1] scatter (elevation vs C/N0) at slip time ────────────────
+    ax_sc = axes[0, 1]
+    for ant in ants:
+        sub = slips_c[slips_c["antenna_mount"] == ant]
+        if has_elev:
+            sub = sub.dropna(subset=["elev_before"])
+            ax_sc.scatter(sub["elev_before"], sub["cno_before"],
+                          color=ant_color[ant], marker=ant_marker[ant],
+                          s=15, alpha=0.4, label=ant)
+            ax_sc.set_xlabel("Elevation at slip (°)")
+        else:
+            ax_sc.scatter(np.arange(len(sub)), sub["cno_before"],
+                          color=ant_color[ant], marker=ant_marker[ant],
+                          s=15, alpha=0.4, label=ant)
+            ax_sc.set_xlabel("Slip index")
+    ax_sc.set_ylabel("C/N0 at slip (dBHz)")
+    ax_sc.set_title("(elevation, C/N0) at slip time\nupper-right = strong signal, high elevation = significant slip")
+    ax_sc.axhline(35, color="grey", linestyle="--", linewidth=0.8)
+    if has_elev:
+        ax_sc.axvline(30, color="grey", linestyle="--", linewidth=0.8)
+    ax_sc.legend(fontsize=8)
+    ax_sc.grid(True, alpha=0.3)
+
+    if has_elev:
+        # ── elevation exposure and slip counts ────────────────────────
+        df_e               = df.dropna(subset=["elev_deg"]).copy()
+        df_e["el_bin"]     = pd.cut(df_e["elev_deg"],          el_edges,
+                                    labels=el_labels, right=False)
+        slips_e            = slips.dropna(subset=["elev_before"]).copy()
+        slips_e["el_bin"]  = pd.cut(slips_e["elev_before"],    el_edges,
+                                    labels=el_labels, right=False)
+        exp_el  = (df_e.groupby(["antenna_mount", "el_bin"], observed=True)
+                       .size().rename("n_epochs").reset_index())
+        cnt_el  = (slips_e.groupby(["antenna_mount", "el_bin"], observed=True)
+                          .size().rename("n_slips").reset_index())
+        mgd_el  = exp_el.merge(cnt_el, on=["antenna_mount", "el_bin"], how="left")
+        mgd_el["n_slips"] = mgd_el["n_slips"].fillna(0)
+        mgd_el["rate"]    = mgd_el["n_slips"] / (mgd_el["n_epochs"] / 3600.0)
+
+        # ── [1,0] slip rate vs elevation ──────────────────────────────
+        bar_rate(axes[1, 0], mgd_el, "el_bin", el_labels, ants)
+        axes[1, 0].set_xlabel("Elevation at last good epoch before slip (°)")
+        axes[1, 0].set_title("Slip rate vs elevation\n(normalised by tracking exposure)")
+
+        # ── [1,1] cumulative slip fraction vs elevation ───────────────
+        ax_cum = axes[1, 1]
+        for ant in ants:
+            sub = (slips_e[slips_e["antenna_mount"] == ant]
+                   .sort_values("elev_before"))
+            if sub.empty:
+                continue
+            y_cum = np.arange(1, len(sub) + 1) / len(sub) * 100
+            ax_cum.plot(sub["elev_before"].values, y_cum,
+                        color=ant_color[ant], label=ant, linewidth=1.5)
+        ax_cum.axvline(30, color="grey", linestyle="--",
+                       linewidth=0.8, label="30° mask")
+        ax_cum.set_xlabel("Elevation (°)")
+        ax_cum.set_ylabel("Cumulative slip fraction (%)")
+        ax_cum.set_title("Cumulative slip fraction vs elevation\n"
+                         "steep rise at low elevation = expected; "
+                         "high-elevation tail = antenna problem")
+        ax_cum.legend(fontsize=8)
+        ax_cum.grid(True, alpha=0.3)
+        ax_cum.set_ylim(0, 105)
+
+    fig.suptitle("Cycle slip quality analysis — slips normalised by tracking exposure\n"
+                 "Excess slips at low C/N0 / low elevation = expected;  "
+                 "excess at high C/N0 / high elevation = real antenna problem",
+                 fontsize=10)
+    fig.tight_layout()
+    path = out_stem.parent / (out_stem.name + "_slip_quality.png")
+    fig.savefig(path, dpi=120, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Plot    → {path}")
+
+
 # ── main ─────────────────────────────────────────────────────────────── #
 
 def main():
@@ -717,6 +897,7 @@ def main():
     plot_cmc_vs_elevation(df, out_stem)
     plot_cmc_skyplot(df, out_stem)
     plot_cycle_slip_timeline(slips, out_stem)
+    plot_slip_quality(df, slips, out_stem)
     print("Done.")
 
 
