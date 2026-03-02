@@ -74,7 +74,8 @@ def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
     baud          = cfg["baud"]
     antenna_mount = cfg["antenna_mount"]
     mount_site    = cfg["mount_site"]
-    acc           = GsvAccumulator(receiver, antenna_mount=antenna_mount, mount_site=mount_site)
+    acc         = GsvAccumulator(receiver, antenna_mount=antenna_mount, mount_site=mount_site)
+    navsat_used: dict[tuple[str, int], bool] = {}  # (gnss_id, sv_id) -> used
 
     while not stop.is_set():
         try:
@@ -85,10 +86,15 @@ def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
                     identity = getattr(msg, "identity", "")
 
                     if identity == "NAV-SAT":
-                        ts   = datetime.now(tz=timezone.utc)
-                        snap = snapshot_from_navsat(msg, label=receiver, timestamp=ts,
-                                                    antenna_mount=antenna_mount,
-                                                    mount_site=mount_site)
+                        # Extract used flags; annotate GSV snapshots rather than
+                        # logging NAV-SAT directly (NAV-SAT lacks signal_id).
+                        ts      = datetime.now(tz=timezone.utc)
+                        nav_snap = snapshot_from_navsat(msg, label=receiver, timestamp=ts,
+                                                        antenna_mount=antenna_mount,
+                                                        mount_site=mount_site)
+                        navsat_used = {(s.gnss_id, s.sv_id): s.used
+                                       for s in nav_snap.satellites}
+                        snap = None
                     elif identity == "RXM-RAWX":
                         ts   = datetime.now(tz=timezone.utc)
                         meas = snapshot_from_rawx(msg, label=receiver,
@@ -108,6 +114,10 @@ def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
                         snap = None
                     else:
                         snap = acc.feed(msg)
+                        if snap is not None and navsat_used:
+                            # Annotate with used flags from the latest NAV-SAT message
+                            for sat in snap.satellites:
+                                sat.used = navsat_used.get((sat.gnss_id, sat.sv_id), False)
 
                     if snap is not None:
                         logger.write(snap)

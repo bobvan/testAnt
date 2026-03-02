@@ -171,7 +171,7 @@ def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
     stats = (epoch_sig.groupby(["receiver", sig_col])["cno_dBHz"]
                       .agg(["mean", "std"]).reset_index())
 
-    signals = sorted(df[sig_col].unique())
+    signals = sorted(df[sig_col].dropna().unique())
     deltas, errs = [], []
     for s in signals:
         ra = stats[(stats["receiver"] == rx_a) & (stats[sig_col] == s)]
