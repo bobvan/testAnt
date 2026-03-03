@@ -7,7 +7,10 @@ Usage:
 """
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import numpy as np
 import pandas as pd
@@ -117,7 +120,8 @@ def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
     print(f"Report  → {path}")
 
 
-def plot_cno(epoch: pd.DataFrame, out_stem: Path, labels: dict) -> None:
+def plot_cno(epoch: pd.DataFrame, out_stem: Path, labels: dict,
+             filter_note: str = "") -> None:
     fig, ax = plt.subplots(figsize=(14, 4))
     for rx, g in epoch.groupby("receiver"):
         g = g.sort_values("timestamp")
@@ -127,7 +131,10 @@ def plot_cno(epoch: pd.DataFrame, out_stem: Path, labels: dict) -> None:
                         g["mean_cno"] - g["std_cno"],
                         g["mean_cno"] + g["std_cno"],
                         alpha=0.15)
-    ax.set_title("Mean C/N0 over time (shaded band = ±1σ across tracked satellites)")
+    title = "Mean C/N0 over time (shaded band = ±1σ across tracked satellites)"
+    if filter_note:
+        title += f"\n{filter_note}"
+    ax.set_title(title)
     ax.set_ylabel("C/N0 (dBHz)")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     fig.autofmt_xdate()
@@ -165,13 +172,17 @@ def plot_delta(epoch: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
-def plot_satcount(epoch: pd.DataFrame, out_stem: Path, labels: dict) -> None:
+def plot_satcount(epoch: pd.DataFrame, out_stem: Path, labels: dict,
+                  filter_note: str = "") -> None:
     fig, ax = plt.subplots(figsize=(14, 3))
     for rx, g in epoch.groupby("receiver"):
         g = g.sort_values("timestamp")
         ax.plot(g["timestamp"], g["sat_count"], label=labels.get(rx, rx),
                 linewidth=0.6, alpha=0.85)
-    ax.set_title("Tracked satellite count")
+    title = "Tracked satellite count (common signals only)" if filter_note else "Tracked satellite count"
+    if filter_note:
+        title += f"\n{filter_note}"
+    ax.set_title(title)
     ax.set_ylabel("Satellites")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     fig.autofmt_xdate()
@@ -181,7 +192,8 @@ def plot_satcount(epoch: pd.DataFrame, out_stem: Path, labels: dict) -> None:
     print(f"Plot    → {path}")
 
 
-def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
+def plot_by_signal(df: pd.DataFrame, out_stem: Path,
+                   filter_note: str = "") -> None:
     # Compute per-epoch per-signal means, then plot antenna-A minus antenna-B
     # delta with quadrature error bars.  Works with any two-receiver CSV.
     sig_col = "signal_id" if "signal_id" in df.columns else "gnss_id"
@@ -204,14 +216,19 @@ def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
     stats = (epoch_sig.groupby(["receiver", sig_col])["cno_dBHz"]
                       .agg(["mean", "std"]).reset_index())
 
-    signals = sorted(df[sig_col].dropna().unique())
+    # Only include signals present in both receivers
+    rx_a_sigs = set(stats[stats["receiver"] == rx_a][sig_col])
+    rx_b_sigs = set(stats[stats["receiver"] == rx_b][sig_col])
+    common_sigs = rx_a_sigs & rx_b_sigs
+    signals = sorted(common_sigs)
+    if not signals:
+        print("Skip    → by_signal (no common signals between receivers)")
+        return
+
     deltas, errs = [], []
     for s in signals:
         ra = stats[(stats["receiver"] == rx_a) & (stats[sig_col] == s)]
         rb = stats[(stats["receiver"] == rx_b) & (stats[sig_col] == s)]
-        if ra.empty or rb.empty:
-            deltas.append(0); errs.append(0)
-            continue
         deltas.append(float(ra["mean"].iloc[0] - rb["mean"].iloc[0]))
         errs.append(float((ra["std"].iloc[0]**2 + rb["std"].iloc[0]**2) ** 0.5))
 
@@ -221,9 +238,12 @@ def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
            yerr=errs, capsize=6, error_kw={"linewidth": 1.5, "color": "black"})
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
     ax.set_ylabel(f"{ant_a} − {ant_b}  ΔC/N0 (dBHz)")
-    ax.set_title(f"{label_a}  vs  {label_b} — mean C/N0 by signal\n"
-                 "error bars = ±1σ quadrature (√(σ_A² + σ_B²)); "
-                 "bar crossing zero = not significant")
+    title = (f"{label_a}  vs  {label_b} — mean C/N0 by signal\n"
+             "error bars = ±1σ quadrature (√(σ_A² + σ_B²)); "
+             "bar crossing zero = not significant")
+    if filter_note:
+        title += f"\n{filter_note}"
+    ax.set_title(title)
     plt.xticks(rotation=20, ha="right")
     ax.grid(True, alpha=0.3, axis="y"); fig.tight_layout()
     path = out_stem.parent / (out_stem.name + "_by_signal.png")
@@ -392,10 +412,22 @@ def plot_used_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
+def _load_toml(path: Path) -> dict:
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
     ap.add_argument("--out", required=True, help="Output filename stem")
+    ap.add_argument("--receivers", default=None,
+                    help="Receiver config (receivers.toml) to restrict "
+                         "comparisons to the signal intersection")
     args = ap.parse_args()
 
     csv_path = Path(args.csv)
@@ -406,13 +438,32 @@ def main():
     df = load(csv_path)
     print(f"  {len(df):,} rows  {df['timestamp'].nunique()} epochs")
 
+    # Filter to signal intersection if receiver config provided
+    filter_note = ""
+    if args.receivers:
+        from testant.signals import (
+            load_receiver_signals, signal_intersection, exclusion_note,
+        )
+        rx_cfg = _load_toml(Path(args.receivers))
+        rx_signals = load_receiver_signals(rx_cfg)
+        common = signal_intersection(rx_signals)
+        if common and "gnss_id" in df.columns:
+            filter_note = exclusion_note(rx_signals, common)
+            before = len(df)
+            df = df[df["gnss_id"].isin(common)].copy()
+            dropped = before - len(df)
+            if dropped:
+                print(f"  Signal intersection filter: dropped {dropped:,} rows")
+            if filter_note:
+                print(f"  {filter_note}")
+
     epoch = epoch_stats(df)
     labels = make_rx_label(df)
     write_report(df, epoch, out_stem)
-    plot_cno(epoch, out_stem, labels)
+    plot_cno(epoch, out_stem, labels, filter_note)
     plot_delta(epoch, out_stem)
-    plot_satcount(epoch, out_stem, labels)
-    plot_by_signal(df, out_stem)
+    plot_satcount(epoch, out_stem, labels, filter_note)
+    plot_by_signal(df, out_stem, filter_note)
     plot_skyplot(df, out_stem)
     plot_cno_vs_elevation(df, out_stem)
     plot_used_vs_elevation(df, out_stem)

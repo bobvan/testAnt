@@ -18,6 +18,7 @@ baud  = 115200
 hw    = "ZED-F9T-20B"
 fw    = "TIM 2.25"
 note  = "no GLONASS (hardware limitation of -20B variant)"
+available_signals = ["GPS", "Galileo", "BeiDou", "QZSS", "SBAS"]
 
 [receiver.BOT]
 port  = "/dev/gnss-bot"
@@ -25,6 +26,7 @@ baud  = 115200
 hw    = "ZED-F9T"
 fw    = "TIM 2.20"
 note  = "has GLONASS"
+available_signals = ["GPS", "GLONASS", "Galileo", "BeiDou", "QZSS", "SBAS"]
 
 [ticc]
 port  = "/dev/ticc"

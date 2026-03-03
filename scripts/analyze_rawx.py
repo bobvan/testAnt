@@ -22,7 +22,10 @@ Outputs (all suffixed onto <out>):
 """
 
 import argparse
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import numpy as np
 import pandas as pd
@@ -386,7 +389,8 @@ def plot_cmc_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
-def plot_cmc_diff(df: pd.DataFrame, out_stem: Path) -> None:
+def plot_cmc_diff(df: pd.DataFrame, out_stem: Path,
+                  filter_note: str = "") -> None:
     """
     Detrended CMC difference (rx_a − rx_b) matched per SV per epoch.
     Cancels per-SV integer ambiguity; residual = receiver noise + diff multipath.
@@ -451,9 +455,11 @@ def plot_cmc_diff(df: pd.DataFrame, out_stem: Path) -> None:
 
     axes[-1, 0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     fig.autofmt_xdate()
-    fig.suptitle(f"Detrended CMC difference ({label_a} − {label_b}) by signal\n"
-                 "per-SV matched; residual = receiver noise + differential multipath",
-                 fontsize=11, y=1.002)
+    suptitle = (f"Detrended CMC difference ({label_a} − {label_b}) by signal\n"
+                "per-SV matched; residual = receiver noise + differential multipath")
+    if filter_note:
+        suptitle += f"\n{filter_note}"
+    fig.suptitle(suptitle, fontsize=11, y=1.002)
     fig.tight_layout()
     path = out_stem.parent / (out_stem.name + "_cmc_diff.png")
     fig.savefig(path, dpi=120, bbox_inches="tight")
@@ -891,6 +897,15 @@ def plot_slip_quality(df: pd.DataFrame, slips: pd.DataFrame,
 
 # ── main ─────────────────────────────────────────────────────────────── #
 
+def _load_toml(path: Path) -> dict:
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(path, "rb") as f:
+        return tomllib.load(f)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="CMC and cycle-slip analysis from a RAWX CSV"
@@ -899,6 +914,9 @@ def main():
     ap.add_argument("--out",  required=True, help="Output filename stem")
     ap.add_argument("--snr",  default=None,
                     help="Companion SNR CSV for elevation/azimuth join")
+    ap.add_argument("--receivers", default=None,
+                    help="Receiver config (receivers.toml) to restrict "
+                         "comparisons to the signal intersection")
     args = ap.parse_args()
 
     csv_path = Path(args.csv)
@@ -911,9 +929,31 @@ def main():
           f"{df['timestamp'].nunique()} epochs  "
           f"{df['signal_id'].nunique()} signals")
 
+    # Filter to signal intersection if receiver config provided
+    filter_note = ""
+    if args.receivers:
+        from testant.signals import (
+            load_receiver_signals, signal_intersection, exclusion_note,
+        )
+        rx_cfg = _load_toml(Path(args.receivers))
+        rx_signals = load_receiver_signals(rx_cfg)
+        common = signal_intersection(rx_signals)
+        if common and "gnss_id" in df.columns:
+            filter_note = exclusion_note(rx_signals, common)
+            before = len(df)
+            df = df[df["gnss_id"].isin(common)].copy()
+            dropped = before - len(df)
+            if dropped:
+                print(f"  Signal intersection filter: dropped {dropped:,} rows")
+            if filter_note:
+                print(f"  {filter_note}")
+
     if args.snr:
         print(f"Loading SNR   : {args.snr}")
         snr_df = load_snr(Path(args.snr))
+        # Apply same signal intersection filter to SNR data
+        if filter_note and "gnss_id" in snr_df.columns:
+            snr_df = snr_df[snr_df["gnss_id"].isin(common)].copy()
         df = add_elevation(df, snr_df)
 
     df = add_cmc(df)
@@ -927,7 +967,7 @@ def main():
 
     write_report(df, slips, out_stem)
     plot_cmc_by_signal(df, out_stem)
-    plot_cmc_diff(df, out_stem)
+    plot_cmc_diff(df, out_stem, filter_note)
     plot_lock_duration(df, out_stem)
     plot_cmc_vs_elevation(df, out_stem)
     plot_cmc_skyplot(df, out_stem)
