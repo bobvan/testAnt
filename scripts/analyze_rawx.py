@@ -834,8 +834,12 @@ def plot_slip_quality(df: pd.DataFrame, slips: pd.DataFrame,
                           color=ant_color[ant], marker=ant_marker[ant],
                           s=15, alpha=0.4, label=ant)
             ax_sc.set_xlabel("Slip index")
+    ax_sc.axhspan(0,  30, color="red",   alpha=0.06, zorder=0)
+    ax_sc.axhspan(30, 40, color="gold",  alpha=0.07, zorder=0)
+    ax_sc.axhspan(40, 90, color="green", alpha=0.05, zorder=0)
     ax_sc.set_ylabel("C/N0 at slip (dBHz)")
-    ax_sc.set_title("(elevation, C/N0) at slip time\nupper-right = strong signal, high elevation = significant slip")
+    ax_sc.set_title("(elevation, C/N0) at slip time\nupper-right = strong signal, high elevation = significant slip\n"
+                    "red < 30 dBHz (poor) · yellow 30–40 (marginal) · green > 40 (good)")
     ax_sc.axhline(35, color="grey", linestyle="--", linewidth=0.8)
     if has_elev:
         ax_sc.axvline(30, color="grey", linestyle="--", linewidth=0.8)

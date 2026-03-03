@@ -120,9 +120,17 @@ def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
     print(f"Report  → {path}")
 
 
+def _add_cno_shading(ax) -> None:
+    """Add light red/yellow/green background shading for C/N0 quality zones."""
+    ax.axhspan(0,  30, color="red",    alpha=0.06, zorder=0)
+    ax.axhspan(30, 40, color="gold",   alpha=0.07, zorder=0)
+    ax.axhspan(40, 90, color="green",  alpha=0.05, zorder=0)
+
+
 def plot_cno(epoch: pd.DataFrame, out_stem: Path, labels: dict,
              filter_note: str = "") -> None:
     fig, ax = plt.subplots(figsize=(14, 4))
+    _add_cno_shading(ax)
     for rx, g in epoch.groupby("receiver"):
         g = g.sort_values("timestamp")
         ax.plot(g["timestamp"], g["mean_cno"], label=labels.get(rx, rx),
@@ -131,7 +139,8 @@ def plot_cno(epoch: pd.DataFrame, out_stem: Path, labels: dict,
                         g["mean_cno"] - g["std_cno"],
                         g["mean_cno"] + g["std_cno"],
                         alpha=0.15)
-    title = "Mean C/N0 over time (shaded band = ±1σ across tracked satellites)"
+    title = ("Mean C/N0 over time (shaded band = ±1σ across tracked satellites)\n"
+             "red < 30 dBHz (poor) · yellow 30–40 (marginal) · green > 40 (good)")
     if filter_note:
         title += f"\n{filter_note}"
     ax.set_title(title)
@@ -353,6 +362,7 @@ def plot_cno_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
                         linewidth=1.2, marker="o", markersize=3, capsize=3)
         if ylim:
             ax.set_ylim(ylim)
+        _add_cno_shading(ax)
         ax.set_ylabel("C/N0 (dBHz)")
         ax.set_title(sig)
         ax.legend(fontsize=8)
