@@ -34,9 +34,26 @@ def epoch_stats(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def make_rx_label(df: pd.DataFrame) -> dict[str, str]:
+    """Map each receiver → 'Antenna @ site (RECEIVER)' for labels and reports."""
+    result = {}
+    for rx, g in df.groupby("receiver"):
+        ant_str = (g["antenna_mount"].dropna().mode().iloc[0]
+                   if "antenna_mount" in g.columns and g["antenna_mount"].notna().any()
+                   else rx)
+        site_str = ""
+        if "mount_site" in g.columns:
+            site = g["mount_site"].dropna().mode()
+            if not site.empty and str(site.iloc[0]):
+                site_str = f" @ {site.iloc[0]}"
+        result[rx] = f"{ant_str}{site_str} ({rx})"
+    return result
+
+
 def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
     lines = []
     a = lines.append
+    labels = make_rx_label(df)
 
     dur_h = (df["timestamp"].max() - df["timestamp"].min()).total_seconds() / 3600
     a("=" * 60)
@@ -48,9 +65,10 @@ def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
     a(f"  Epochs   : {epoch['timestamp'].nunique()}")
     a("")
 
-    a("── Overall C/N0 per receiver ───────────────────────────────")
+    a("── Overall C/N0 per antenna ────────────────────────────────")
     for rx, g in epoch.groupby("receiver"):
-        a(f"  {rx:6s}  mean={g['mean_cno'].mean():.2f} dBHz  "
+        lbl = labels.get(rx, rx)
+        a(f"  {lbl:30s}  mean={g['mean_cno'].mean():.2f} dBHz  "
           f"σ={g['mean_cno'].std():.2f}  "
           f"avg_sats={g['sat_count'].mean():.1f}")
     a("")
@@ -75,7 +93,8 @@ def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
                          .reset_index()
                          .sort_values([sig_col, "receiver"]))
     for _, row in sig_mean.iterrows():
-        a(f"  {row['receiver']:6s}  {row[sig_col]:14s}  "
+        lbl = labels.get(row['receiver'], row['receiver'])
+        a(f"  {lbl:30s}  {row[sig_col]:14s}  "
           f"mean={row['mean_cno']:.2f} ±{row['std_cno']:.2f} dBHz  n_epochs={int(row['n'])}")
     a("")
 
@@ -87,7 +106,8 @@ def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
                   .reset_index()
                   .sort_values(["hour", "receiver"]))
     for _, row in hrly.iterrows():
-        a(f"  {row['hour'].strftime('%H:%M')}  {row['receiver']:6s}  "
+        lbl = labels.get(row['receiver'], row['receiver'])
+        a(f"  {row['hour'].strftime('%H:%M')}  {lbl:30s}  "
           f"C/N0={row['mean_cno']:.2f} dBHz  sats={row['sat_count']:.1f}")
     a("")
     a("=" * 60)
@@ -97,11 +117,12 @@ def write_report(df: pd.DataFrame, epoch: pd.DataFrame, out_stem: Path) -> None:
     print(f"Report  → {path}")
 
 
-def plot_cno(epoch: pd.DataFrame, out_stem: Path) -> None:
+def plot_cno(epoch: pd.DataFrame, out_stem: Path, labels: dict) -> None:
     fig, ax = plt.subplots(figsize=(14, 4))
     for rx, g in epoch.groupby("receiver"):
         g = g.sort_values("timestamp")
-        ax.plot(g["timestamp"], g["mean_cno"], label=rx, linewidth=0.6, alpha=0.85)
+        ax.plot(g["timestamp"], g["mean_cno"], label=labels.get(rx, rx),
+                linewidth=0.6, alpha=0.85)
         ax.fill_between(g["timestamp"],
                         g["mean_cno"] - g["std_cno"],
                         g["mean_cno"] + g["std_cno"],
@@ -144,11 +165,12 @@ def plot_delta(epoch: pd.DataFrame, out_stem: Path) -> None:
     print(f"Plot    → {path}")
 
 
-def plot_satcount(epoch: pd.DataFrame, out_stem: Path) -> None:
+def plot_satcount(epoch: pd.DataFrame, out_stem: Path, labels: dict) -> None:
     fig, ax = plt.subplots(figsize=(14, 3))
     for rx, g in epoch.groupby("receiver"):
         g = g.sort_values("timestamp")
-        ax.plot(g["timestamp"], g["sat_count"], label=rx, linewidth=0.6, alpha=0.85)
+        ax.plot(g["timestamp"], g["sat_count"], label=labels.get(rx, rx),
+                linewidth=0.6, alpha=0.85)
     ax.set_title("Tracked satellite count")
     ax.set_ylabel("Satellites")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
@@ -160,11 +182,22 @@ def plot_satcount(epoch: pd.DataFrame, out_stem: Path) -> None:
 
 
 def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
-    # Compute per-epoch per-signal means, then plot receiver-A minus receiver-B
+    # Compute per-epoch per-signal means, then plot antenna-A minus antenna-B
     # delta with quadrature error bars.  Works with any two-receiver CSV.
     sig_col = "signal_id" if "signal_id" in df.columns else "gnss_id"
     receivers = sorted(df["receiver"].unique())
     rx_a, rx_b = receivers[0], receivers[1] if len(receivers) > 1 else (receivers[0], receivers[0])
+
+    labels = make_rx_label(df)
+    label_a = labels.get(rx_a, rx_a)
+    label_b = labels.get(rx_b, rx_b)
+    # Short antenna names for the y-axis label
+    ant_a = (df[df["receiver"] == rx_a]["antenna_mount"].dropna().mode()
+             if "antenna_mount" in df.columns else pd.Series([rx_a]))
+    ant_b = (df[df["receiver"] == rx_b]["antenna_mount"].dropna().mode()
+             if "antenna_mount" in df.columns else pd.Series([rx_b]))
+    ant_a = ant_a.iloc[0] if not ant_a.empty else rx_a
+    ant_b = ant_b.iloc[0] if not ant_b.empty else rx_b
 
     epoch_sig = (df.groupby(["timestamp", "receiver", sig_col])["cno_dBHz"]
                    .mean().reset_index())
@@ -187,8 +220,8 @@ def plot_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
     ax.bar(signals, deltas, color=colors, alpha=0.8,
            yerr=errs, capsize=6, error_kw={"linewidth": 1.5, "color": "black"})
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--")
-    ax.set_ylabel(f"{rx_a} − {rx_b} C/N0 (dBHz)")
-    ax.set_title(f"{rx_a} − {rx_b} mean C/N0 by signal\n"
+    ax.set_ylabel(f"{ant_a} − {ant_b}  ΔC/N0 (dBHz)")
+    ax.set_title(f"{label_a}  vs  {label_b} — mean C/N0 by signal\n"
                  "error bars = ±1σ quadrature (√(σ_A² + σ_B²)); "
                  "bar crossing zero = not significant")
     plt.xticks(rotation=20, ha="right")
@@ -374,10 +407,11 @@ def main():
     print(f"  {len(df):,} rows  {df['timestamp'].nunique()} epochs")
 
     epoch = epoch_stats(df)
+    labels = make_rx_label(df)
     write_report(df, epoch, out_stem)
-    plot_cno(epoch, out_stem)
+    plot_cno(epoch, out_stem, labels)
     plot_delta(epoch, out_stem)
-    plot_satcount(epoch, out_stem)
+    plot_satcount(epoch, out_stem, labels)
     plot_by_signal(df, out_stem)
     plot_skyplot(df, out_stem)
     plot_cno_vs_elevation(df, out_stem)

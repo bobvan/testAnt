@@ -65,6 +65,24 @@ _EL_BINS = list(range(0, 95, 5))   # 0, 5, 10, …, 90
 _MIN_OBS = 20                      # minimum obs per bin to plot
 
 
+# ── label helpers ────────────────────────────────────────────────────── #
+
+def make_rx_label(df: pd.DataFrame) -> dict[str, str]:
+    """Map each receiver → 'Antenna @ site (RECEIVER)' for labels and reports."""
+    result = {}
+    for rx, g in df.groupby("receiver"):
+        ant_str = (g["antenna_mount"].dropna().mode().iloc[0]
+                   if "antenna_mount" in g.columns and g["antenna_mount"].notna().any()
+                   else rx)
+        site_str = ""
+        if "mount_site" in g.columns:
+            site = g["mount_site"].dropna().mode()
+            if not site.empty and str(site.iloc[0]):
+                site_str = f" @ {site.iloc[0]}"
+        result[rx] = f"{ant_str}{site_str} ({rx})"
+    return result
+
+
 # ── loading ──────────────────────────────────────────────────────────── #
 
 def load(csv_path: Path) -> pd.DataFrame:
@@ -204,6 +222,7 @@ def write_report(df: pd.DataFrame, slips: pd.DataFrame,
                  out_stem: Path) -> None:
     lines = []
     a = lines.append
+    labels = make_rx_label(df)
 
     dur_h = (df["timestamp"].max() - df["timestamp"].min()).total_seconds() / 3600
     a("=" * 62)
@@ -216,8 +235,8 @@ def write_report(df: pd.DataFrame, slips: pd.DataFrame,
     a("")
 
     cmc_ok = df.dropna(subset=["cmc_detrended_m"])
-    a("── Detrended CMC std dev by signal & receiver (noise floor) ────")
-    a(f"  {'Signal':16s}  {'Receiver':8s}  {'N_sv':>5s}  {'N_obs':>6s}  {'std_m':>8s}")
+    a("── Detrended CMC std dev by signal & antenna (noise floor) ─────")
+    a(f"  {'Signal':16s}  {'Antenna':24s}  {'N_sv':>5s}  {'N_obs':>6s}  {'std_m':>8s}")
     sv_counts = (cmc_ok.groupby(["receiver", "signal_id"])["sv_id"]
                        .nunique().rename("n_sv").reset_index())
     stats = (cmc_ok.groupby(["signal_id", "receiver"])["cmc_detrended_m"]
@@ -225,19 +244,21 @@ def write_report(df: pd.DataFrame, slips: pd.DataFrame,
                .sort_values(["signal_id", "receiver"]))
     stats = stats.merge(sv_counts, on=["receiver", "signal_id"])
     for _, row in stats.iterrows():
-        a(f"  {row['signal_id']:16s}  {row['receiver']:8s}  "
+        lbl = labels.get(row['receiver'], row['receiver'])
+        a(f"  {row['signal_id']:16s}  {lbl:24s}  "
           f"{int(row['n_sv']):>5d}  {int(row['n_obs']):>6d}  "
           f"{row['std']:>8.3f} m")
     a("")
 
-    a("── Lock duration stats by signal & receiver (ms) ───────────────")
-    a(f"  {'Signal':16s}  {'Receiver':8s}  {'median_ms':>10s}  {'p95_ms':>8s}")
+    a("── Lock duration stats by signal & antenna (ms) ────────────────")
+    a(f"  {'Signal':16s}  {'Antenna':24s}  {'median_ms':>10s}  {'p95_ms':>8s}")
     lt_stats = (df.groupby(["signal_id", "receiver"])["lock_duration_ms"]
                   .agg(median="median", p95=lambda x: x.quantile(0.95))
                   .reset_index()
                   .sort_values(["signal_id", "receiver"]))
     for _, row in lt_stats.iterrows():
-        a(f"  {row['signal_id']:16s}  {row['receiver']:8s}  "
+        lbl = labels.get(row['receiver'], row['receiver'])
+        a(f"  {row['signal_id']:16s}  {lbl:24s}  "
           f"{row['median']:>10.0f}  {row['p95']:>8.0f}")
     a("")
 
@@ -267,10 +288,11 @@ def write_report(df: pd.DataFrame, slips: pd.DataFrame,
                                    / (summary["n_epochs"] / 3600.0)
                                    * 24.0)
 
-        a(f"  {'Signal':16s}  {'Receiver':8s}  {'Slips':>6s}  "
+        a(f"  {'Signal':16s}  {'Antenna':24s}  {'Slips':>6s}  "
           f"{'Track-h':>7s}  {'Rate/24h':>9s}")
         for _, row in summary.sort_values(["signal_id", "receiver"]).iterrows():
-            a(f"  {row['signal_id']:16s}  {row['receiver']:8s}  "
+            lbl = labels.get(row['receiver'], row['receiver'])
+            a(f"  {row['signal_id']:16s}  {lbl:24s}  "
               f"{int(row['n_slips']):>6d}  "
               f"{row['n_epochs']/3600:>7.2f}  "
               f"{row['rate_per_24h']:>9.1f}")
@@ -301,11 +323,13 @@ def write_report(df: pd.DataFrame, slips: pd.DataFrame,
             a("")
 
         a("  10 largest slips:")
-        a(f"  {'Timestamp':26s}  {'Rx':5s}  {'Sig':14s}  SV  "
+        a(f"  {'Timestamp':26s}  {'Antenna':22s}  {'Sig':14s}  SV  "
           f"{'Before ms':>10s}  {'After ms':>9s}  {'Drop ms':>8s}")
         for _, row in slips.nlargest(10, "drop_ms").iterrows():
+            ant_lbl = (f"{row['antenna_mount']} ({row['receiver']})"
+                       if "antenna_mount" in row.index else row['receiver'])
             a(f"  {str(row['timestamp']):26s}  "
-              f"{row['receiver']:5s}  {row['signal_id']:14s}  "
+              f"{ant_lbl:22s}  {row['signal_id']:14s}  "
               f"{int(row['sv_id']):>2d}  "
               f"{row['lock_before_ms']:>10.0f}  "
               f"{row['lock_after_ms']:>9.0f}  "
@@ -329,6 +353,7 @@ def plot_cmc_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
 
     receivers = sorted(cmc_ok["receiver"].unique())
     colors    = ["steelblue", "tomato", "seagreen", "darkorange"]
+    labels    = make_rx_label(cmc_ok)
 
     fig, axes = plt.subplots(len(signals), 1,
                              figsize=(14, 3 * len(signals)),
@@ -341,7 +366,7 @@ def plot_cmc_by_signal(df: pd.DataFrame, out_stem: Path) -> None:
             g = epoch_med[epoch_med["receiver"] == rx].sort_values("timestamp")
             if g.empty:
                 continue
-            ax.plot(g["timestamp"], g["cmc_detrended_m"], label=rx,
+            ax.plot(g["timestamp"], g["cmc_detrended_m"], label=labels.get(rx, rx),
                     linewidth=0.6, alpha=0.85, color=color)
         ax.axhline(0, color="black", linewidth=0.5, linestyle=":")
         ax.set_ylabel("CMC (m)")
@@ -377,6 +402,15 @@ def plot_cmc_diff(df: pd.DataFrame, out_stem: Path) -> None:
         return
 
     cmc_ok["ts_s"] = cmc_ok["timestamp"].dt.floor("s")
+    labels = make_rx_label(cmc_ok)
+    label_a = labels.get(rx_a, rx_a)
+    label_b = labels.get(rx_b, rx_b)
+    ant_a = (cmc_ok[cmc_ok["receiver"] == rx_a]["antenna_mount"].dropna().mode()
+             if "antenna_mount" in cmc_ok.columns else pd.Series([rx_a]))
+    ant_b = (cmc_ok[cmc_ok["receiver"] == rx_b]["antenna_mount"].dropna().mode()
+             if "antenna_mount" in cmc_ok.columns else pd.Series([rx_b]))
+    ant_a = ant_a.iloc[0] if not ant_a.empty else rx_a
+    ant_b = ant_b.iloc[0] if not ant_b.empty else rx_b
 
     fig, axes = plt.subplots(len(signals), 1,
                              figsize=(14, 3 * len(signals)),
@@ -409,15 +443,15 @@ def plot_cmc_diff(df: pd.DataFrame, out_stem: Path) -> None:
         ax.plot(epoch_diff.index,
                 epoch_diff.rolling(60, min_periods=10).median(),
                 color="navy", linewidth=1.0, label="60-s median")
-        ax.set_ylabel("ΔCMC (m)")
-        ax.set_title(f"{sig}  —  {rx_a} − {rx_b}  "
+        ax.set_ylabel(f"{ant_a} − {ant_b}  ΔCMC (m)")
+        ax.set_title(f"{sig}  —  {label_a} − {label_b}  "
                      f"(std={epoch_diff.std():.3f} m, median {n_sv} SVs/epoch)")
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
 
     axes[-1, 0].xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     fig.autofmt_xdate()
-    fig.suptitle(f"Detrended CMC difference ({rx_a} − {rx_b}) by signal\n"
+    fig.suptitle(f"Detrended CMC difference ({label_a} − {label_b}) by signal\n"
                  "per-SV matched; residual = receiver noise + differential multipath",
                  fontsize=11, y=1.002)
     fig.tight_layout()
@@ -472,6 +506,7 @@ def plot_cmc_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
     signals   = sorted(cmc_ok["signal_id"].unique())
     receivers = sorted(cmc_ok["receiver"].unique())
     colors    = ["steelblue", "tomato", "seagreen", "darkorange"]
+    labels    = make_rx_label(cmc_ok)
 
     fig, axes = plt.subplots(len(signals), 1,
                              figsize=(10, 3.5 * max(len(signals), 1)),
@@ -487,7 +522,7 @@ def plot_cmc_vs_elevation(df: pd.DataFrame, out_stem: Path) -> None:
             if stats.empty:
                 continue
             ax.plot(stats["el_bin_deg"] + 2.5, stats["std"],
-                    label=rx, color=color,
+                    label=labels.get(rx, rx), color=color,
                     linewidth=1.2, marker="o", markersize=3)
         ax.set_ylabel("CMC std (m)")
         ax.set_title(sig)
