@@ -5,10 +5,10 @@ description = "sensitivity test: Patch1 on BOT, Patch2 on TOP"
 
 [antenna.A]
 label      = "Patch1"
-mount_site = "test"
+mount_site = "EastRoofSlope"
 receiver   = "BOT"
 
 [antenna.B]
 label      = "Patch2"
-mount_site = "test"
+mount_site = "EastRoofSlope"
 receiver   = "TOP"

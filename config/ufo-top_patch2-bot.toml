@@ -6,10 +6,10 @@ description = "sensitivity test: UFO on TOP, Patch2 on BOT"
 
 [antenna.A]
 label      = "UFO"
-mount_site = "test"
+mount_site = "GaragePeak"
 receiver   = "TOP"
 
 [antenna.B]
 label      = "Patch2"
-mount_site = "test"
+mount_site = "EastRoofSlope"
 receiver   = "BOT"
