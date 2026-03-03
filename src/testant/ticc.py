@@ -11,6 +11,11 @@ Timestamps have 12 decimal places (1 ps resolution).
 Lines starting with '#' are comments (boot-time header); they are skipped.
 
 Robustness notes:
+  - After a power cycle the TICC enters a silent setup mode for ~5-10 s
+    before starting timestamp output (like a BIOS waiting for config input).
+    The port is open but produces nothing during this window — this is
+    normal.  Do not treat it as an error or retry; just wait.  Subsequent
+    opens (TICC already in timestamp mode) produce output immediately.
   - reset_input_buffer() on open discards stale OS-buffered lines that
     would otherwise appear as a discontinuity of several seconds.
   - Every line is matched against _LINE_RE before parsing; partial lines,
