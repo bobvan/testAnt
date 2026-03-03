@@ -4,15 +4,6 @@
 #
 # Usage:
 #   scripts/run.sh <run-config> <duration> [--bg]
-#
-# Arguments:
-#   run-config   path to any *.toml run config file
-#   duration     timeout duration: 5m, 1h, 48h, etc. (passed to GNU timeout)
-#   --bg         run in the background via nohup (use for runs > ~10 minutes)
-#
-# Examples:
-#   scripts/run.sh config/patch1-bot_patch2-top.toml 5m
-#   scripts/run.sh config/cal_s1-top_s2-bot.toml 1h --bg
 
 set -uo pipefail
 
@@ -20,7 +11,9 @@ RUN_CONFIG="${1:?Usage: run.sh <run-config> <duration> [--bg]}"
 DURATION="${2:?Usage: run.sh <run-config> <duration> [--bg]}"
 BG="${3:-}"
 
-# Derive output names from config key + timestamp
+PY="$HOME/pygpsclient/bin/python"
+REPO="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )/.." && pwd )"
+
 KEY=$(basename "$RUN_CONFIG" .toml)
 TIMESTAMP=$(date -u +%Y%m%dT%H%M%S)
 CSV="data/${KEY}_${TIMESTAMP}.csv"
@@ -37,19 +30,17 @@ if [[ "$BG" == "--bg" ]]; then
 fi
 
 run_session() {
-    # timeout exits 124 when it kills the process — treat that as normal completion
-    timeout "$DURATION" python scripts/log_snr.py --run "$RUN_CONFIG" --out "$CSV" || \
+    timeout "$DURATION" "$PY" scripts/log_snr.py --run "$RUN_CONFIG" --out "$CSV" || \
         [[ $? -eq 124 ]] || exit 1
-    python scripts/analyze_snr.py --csv "$CSV" --out "$STEM"
+    "$PY" scripts/analyze_snr.py --csv "$CSV" --out "$STEM"
 }
 
 if [[ "$BG" == "--bg" ]]; then
     nohup bash -c "
-        source ~/.bashrc 2>/dev/null || true
-        cd '$(pwd)'
-        timeout '$DURATION' python scripts/log_snr.py --run '$RUN_CONFIG' --out '$CSV' || \
+        cd '$REPO'
+        timeout '$DURATION' '$PY' scripts/log_snr.py --run '$RUN_CONFIG' --out '$CSV' || \
             [[ \$? -eq 124 ]] || exit 1
-        python scripts/analyze_snr.py --csv '$CSV' --out '$STEM'
+        '$PY' scripts/analyze_snr.py --csv '$CSV' --out '$STEM'
     " > "$LOG" 2>&1 &
     echo "PID      : $!"
     echo "Tail log : tail -f $LOG"
