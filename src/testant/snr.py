@@ -69,8 +69,7 @@ def snapshot_from_navsat(msg: Any, label: str, timestamp: datetime,
         cno         = getattr(msg, f"cno_{i:02d}", 0)
         elev        = getattr(msg, f"elev_{i:02d}", float("nan"))
         azim        = getattr(msg, f"azim_{i:02d}", float("nan"))
-        flags       = getattr(msg, f"flags_{i:02d}", 0)
-        used        = bool(flags & 0x08)  # bit 3 = svUsed
+        used        = bool(getattr(msg, f"svUsed_{i:02d}", 0))  # pyubx2 expands flags → named subfields
         gnss_name   = _GNSS_ID_MAP.get(gnss_id_raw, f"GNSS{gnss_id_raw}")
         snap.satellites.append(SatInfo(gnss_name, sv_id, float(cno), float(elev), float(azim), used))
     return snap
