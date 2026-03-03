@@ -36,3 +36,9 @@ Thumbs.db
 
 # Per-run test config (antenna/mount assignments — edit before each run)
 config/run.toml
+
+# Gas Town (added by gt)
+.beads/
+.runtime/
+.claude/commands/
+.logs/
