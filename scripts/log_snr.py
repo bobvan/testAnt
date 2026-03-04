@@ -144,9 +144,10 @@ def ticc_thread(cfg: dict, logger: TiccLogger, stop: threading.Event):
         try:
             with Ticc(port=port, baud=baud) as ticc:
                 for ch, ts in ticc:
+                    host_ts = datetime.now(tz=timezone.utc)
                     if stop.is_set():
                         break
-                    logger.write(ch, ts)
+                    logger.write(ch, ts, host_ts)
         except Exception as exc:
             if stop.is_set():
                 break
