@@ -7,9 +7,9 @@ e.g.
     402.342588195696 chA
     402.342588174417 chB
 
-Timestamps have 8–12 decimal places.  Older firmware used 12 (1 ps LSB);
-newer firmware uses 8 (10 ps LSB).  The counter's single-shot noise is ~60 ps,
-so the last 1–2 displayed digits are noise in either case.
+Timestamps have 11–12 decimal places.  Older firmware used 12 (1 ps LSB);
+newer firmware uses 11 (10 ps LSB).  The counter's single-shot noise is ~60 ps,
+so the last displayed digit is noise in either case.
 Lines starting with '#' are comments (boot-time header); they are skipped.
 
 Robustness notes:
@@ -30,9 +30,9 @@ import re
 
 import serial
 
-# digits DOT 8-to-12-digits whitespace ch followed by A or B, nothing else.
-# 8 digits = 10 ps LSB (newer firmware); 12 digits = 1 ps LSB (older firmware).
-_LINE_RE = re.compile(r"^(\d+\.\d{8,12})\s+(ch[AB])$")
+# digits DOT 11-or-12-digits whitespace ch followed by A or B, nothing else.
+# 12 digits = 1 ps LSB (older firmware); 11 digits = 10 ps LSB (newer firmware).
+_LINE_RE = re.compile(r"^(\d+\.\d{11,12})\s+(ch[AB])$")
 
 
 class Ticc:
