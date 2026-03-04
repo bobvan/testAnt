@@ -143,11 +143,11 @@ def ticc_thread(cfg: dict, logger: TiccLogger, stop: threading.Event):
     while not stop.is_set():
         try:
             with Ticc(port=port, baud=baud) as ticc:
-                for ch, ts in ticc:
+                for ch, ref_sec, ref_ps in ticc:
                     host_ts = datetime.now(tz=timezone.utc)
                     if stop.is_set():
                         break
-                    logger.write(ch, ts, host_ts)
+                    logger.write(ch, ref_sec, ref_ps, host_ts)
         except Exception as exc:
             if stop.is_set():
                 break

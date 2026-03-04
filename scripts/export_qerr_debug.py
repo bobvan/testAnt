@@ -43,33 +43,59 @@ import pandas as pd
 def load_ticc(path: Path) -> pd.DataFrame:
     """
     Load TICC CSV, pair chA/chB by integer second.
-    Returns DataFrame: integer_sec, chA_ts, chB_ts, raw_diff_ns
-    Adds host_sec column (integer UTC second) when host_timestamp is present.
+
+    Handles three CSV format generations:
+      Gen 1: timestamp_s, channel
+      Gen 2: host_timestamp, timestamp_s, channel
+      Gen 3: host_timestamp, ref_sec, ref_ps, channel
+
+    Returns DataFrame with int64 columns chA_ref_sec, chA_ref_ps,
+    chB_ref_sec, chB_ref_ps, raw_diff_ps, raw_diff_ns, and
+    optionally host_sec.
     """
     _BOUNDARY_GUARD_S = 100e-9
 
     df = pd.read_csv(path)
-    df["integer_sec"] = df["timestamp_s"].astype(int)
+    cols = set(df.columns)
 
-    if "host_timestamp" in df.columns:
+    if "ref_sec" in cols:                      # Gen 3
+        df["ref_sec"] = df["ref_sec"].astype("int64")
+        df["ref_ps"]  = df["ref_ps"].astype("int64")
+        df["integer_sec"] = df["ref_sec"]
+    else:                                       # Gen 1 or 2
+        df["integer_sec"] = df["timestamp_s"].astype("int64")
+        df["ref_sec"] = df["integer_sec"]
+        df["ref_ps"]  = ((df["timestamp_s"] - df["integer_sec"]) * 1e12
+                         ).round().astype("int64")
+
+    if "host_timestamp" in cols:
         host_ts = pd.to_datetime(df["host_timestamp"], utc=True)
         df["host_sec"] = (host_ts.astype("int64") // 1_000_000_000).astype(int)
 
-    frac = df["timestamp_s"] - df["integer_sec"]
-    bad = (frac < _BOUNDARY_GUARD_S) | (frac > 1.0 - _BOUNDARY_GUARD_S)
+    frac_s = df["ref_ps"] / 1e12
+    bad = (frac_s < _BOUNDARY_GUARD_S) | (frac_s > 1.0 - _BOUNDARY_GUARD_S)
     if bad.any():
         raise ValueError(f"TICC: {bad.sum()} edge(s) within 100 ns of second boundary")
 
-    piv = (
-        df.pivot_table(index="integer_sec", columns="channel",
-                       values="timestamp_s", aggfunc="first")
-          .rename(columns={"chA": "chA_ts", "chB": "chB_ts"})
-          .dropna()
-          .reset_index()
-          .sort_values("integer_sec")
-          .reset_index(drop=True)
-    )
-    piv["raw_diff_ns"] = (piv["chA_ts"] - piv["chB_ts"]) * 1e9
+    piv_sec = (df.pivot_table(index="integer_sec", columns="channel",
+                               values="ref_sec", aggfunc="first")
+                 .rename(columns={"chA": "chA_ref_sec", "chB": "chB_ref_sec"}))
+    piv_ps  = (df.pivot_table(index="integer_sec", columns="channel",
+                               values="ref_ps",  aggfunc="first")
+                 .rename(columns={"chA": "chA_ref_ps",  "chB": "chB_ref_ps"}))
+    piv = (pd.concat([piv_sec, piv_ps], axis=1)
+             .dropna()
+             .reset_index()
+             .sort_values("integer_sec")
+             .reset_index(drop=True))
+    for col in ("chA_ref_sec", "chB_ref_sec", "chA_ref_ps", "chB_ref_ps"):
+        piv[col] = piv[col].astype("int64")
+
+    piv["raw_diff_ps"] = ((piv["chA_ref_sec"] - piv["chB_ref_sec"])
+                          * 1_000_000_000_000
+                          + piv["chA_ref_ps"] - piv["chB_ref_ps"])
+    piv["raw_diff_ns"] = piv["raw_diff_ps"].astype(float) * 1e-3
+
     if "host_sec" in df.columns:
         hs_map = df.groupby("integer_sec")["host_sec"].first()
         piv["host_sec"] = piv["integer_sec"].map(hs_map)
@@ -138,9 +164,9 @@ def best_gps_offset(ticc: pd.DataFrame,
         best_std = np.inf
         best_sign = +1
         for sign in (+1, -1):
-            corr = ((joined["chA_ts"] + sign * joined["qerr_top_ps"] * 1e-12) -
-                    (joined["chB_ts"] + sign * joined["qerr_bot_ps"] * 1e-12))
-            std = float(corr.std() * 1e9)
+            corr_ps = (joined["raw_diff_ps"]
+                       + sign * (joined["qerr_top_ps"] - joined["qerr_bot_ps"]))
+            std = float(corr_ps.std() * 1e-3)   # ps → ns
             if std < best_std:
                 best_std = std
                 best_sign = sign
@@ -155,9 +181,9 @@ def best_gps_offset(ticc: pd.DataFrame,
         if joined.empty:
             continue
         for sign in (+1, -1):
-            corr = ((joined["chA_ts"] + sign * joined["qerr_top_ps"] * 1e-12) -
-                    (joined["chB_ts"] + sign * joined["qerr_bot_ps"] * 1e-12))
-            std = float(corr.std() * 1e9)
+            corr_ps = (joined["raw_diff_ps"]
+                       + sign * (joined["qerr_top_ps"] - joined["qerr_bot_ps"]))
+            std = float(corr_ps.std() * 1e-3)   # ps → ns
             if std < best_std:
                 best_std = std
                 best_offset, best_sign = naive + delta, sign
@@ -167,23 +193,28 @@ def best_gps_offset(ticc: pd.DataFrame,
 
 # ── TICC cumulative phase walk ───────────────────────────────────────────── #
 
-def cumulative_phase(ts_sorted: np.ndarray,
+def cumulative_phase(ref_sec: np.ndarray, ref_ps: np.ndarray,
                      long_window: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    From sorted TICC timestamps, compute:
+    From TICC int64 ref_sec/ref_ps arrays (already sorted by epoch), compute:
       interval_ps   — per-epoch PPS interval deviation from 1 s (ps)
                       (NaN for the first epoch — no prior interval)
       cumphase_ps   — cumulative sum of interval_ps (phase walk, ps)
       smooth_ps     — rolling-median of cumphase_ps (anticipated sawtooth trend)
 
-    All arrays have the same length as ts_sorted.
+    All arrays have the same length as ref_sec/ref_ps.
+    Using int64 arithmetic avoids float64 precision loss at long TICC uptimes.
     """
-    intervals = np.diff(ts_sorted)                 # N-1 values
-    deviations_ps = (intervals - 1.0) * 1e12       # deviation from perfect 1 s
+    # interval deviation from 1 s, in ps:
+    # (ref_sec[n] - ref_sec[n-1] - 1) * 1e12 + (ref_ps[n] - ref_ps[n-1])
+    sec_diff = np.diff(ref_sec.astype("int64"))    # expected: 1 for no gap
+    ps_diff  = np.diff(ref_ps.astype("int64"))
+    deviations_ps = (sec_diff - 1) * 1_000_000_000_000 + ps_diff  # int64
 
-    # Prepend NaN so length matches ts_sorted
-    interval_ps = np.concatenate([[np.nan], deviations_ps])
-    cumphase_ps = np.concatenate([[np.nan], np.cumsum(deviations_ps)])
+    # Prepend NaN so length matches input arrays
+    dev_f = deviations_ps.astype(float)
+    interval_ps = np.concatenate([[np.nan], dev_f])
+    cumphase_ps = np.concatenate([[np.nan], np.cumsum(dev_f)])
 
     smooth_ps = (pd.Series(cumphase_ps)
                    .rolling(long_window, center=True, min_periods=long_window // 4)
@@ -242,12 +273,12 @@ def main():
     df["qerr_diff_ps"] = df["qerr_top_ps"] - df["qerr_bot_ps"]
 
     # TICC cumulative phase walk (independent oscillator estimate)
-    chA_sorted = np.sort(ticc["chA_ts"].values)
-    chB_sorted = np.sort(ticc["chB_ts"].values)
-
+    # ticc is already sorted by integer_sec from load_ticc(), so no re-sort needed.
     n = len(df)
-    intv_a, cum_a, sm_a = cumulative_phase(chA_sorted, args.long_smooth)
-    intv_b, cum_b, sm_b = cumulative_phase(chB_sorted, args.long_smooth)
+    intv_a, cum_a, sm_a = cumulative_phase(
+        ticc["chA_ref_sec"].values, ticc["chA_ref_ps"].values, args.long_smooth)
+    intv_b, cum_b, sm_b = cumulative_phase(
+        ticc["chB_ref_sec"].values, ticc["chB_ref_ps"].values, args.long_smooth)
 
     # Align TICC phase arrays to the joined df length
     df["ticc_interval_a_ps"]       = intv_a[:n]

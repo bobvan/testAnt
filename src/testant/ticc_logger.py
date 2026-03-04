@@ -8,10 +8,12 @@ Columns:
   host_timestamp  UTC wall-clock captured immediately after the serial line
                   was received.  Used to join with TIM-TP by UTC second,
                   replacing fragile GPS-offset arithmetic.  Floor to the
-                  nearest second to get the epoch key (same technique as
-                  f9tResearch/ticcTpAnalysis.ipynb).
-  timestamp_s     TICC reference clock value (seconds since TICC boot,
-                  arbitrary epoch, 1 ps resolution).
+                  nearest second to get the epoch key.
+  ref_sec         Integer seconds since TICC boot (arbitrary epoch).
+  ref_ps          Picoseconds 0..999_999_999_999.  Stored as integer to
+                  preserve ps resolution without float64 precision loss.
+                  11-digit firmware → 10 ps resolution (last digit = 0).
+                  12-digit firmware →  1 ps resolution.
   channel         'chA' or 'chB'
 """
 
@@ -24,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-FIELDS = ["host_timestamp", "timestamp_s", "channel"]
+FIELDS = ["host_timestamp", "ref_sec", "ref_ps", "channel"]
 
 
 class TiccLogger:
@@ -46,14 +48,15 @@ class TiccLogger:
         if self._file:
             self._file.close()
 
-    def write(self, channel: str, timestamp_s: float,
+    def write(self, channel: str, ref_sec: int, ref_ps: int,
               host_timestamp: datetime | None = None) -> None:
         if host_timestamp is None:
             host_timestamp = datetime.now(tz=timezone.utc)
         with self._lock:
             self._writer.writerow({
                 "host_timestamp": host_timestamp.isoformat(),
-                "timestamp_s":    f"{timestamp_s:.12f}",
+                "ref_sec":        ref_sec,
+                "ref_ps":         ref_ps,
                 "channel":        channel,
             })
             self._file.flush()

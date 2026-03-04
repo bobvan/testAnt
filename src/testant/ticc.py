@@ -30,18 +30,23 @@ import re
 
 import serial
 
-# digits DOT 11-or-12-digits whitespace ch followed by A or B, nothing else.
-# 12 digits = 1 ps LSB (older firmware); 11 digits = 10 ps LSB (newer firmware).
-_LINE_RE = re.compile(r"^(\d+\.\d{11,12})\s+(ch[AB])$")
+# Integer part DOT 11-or-12 fractional digits whitespace ch followed by A or B.
+# Capture integer and fractional parts separately to avoid float64 precision loss:
+# float64 has ~15-16 significant digits total; a 6-digit integer part leaves only
+# ~9 decimal digits, losing ps resolution after ~28 hours of TICC uptime.
+_LINE_RE = re.compile(r"^(\d+)\.(\d{11,12})\s+(ch[AB])$")
 
 
 class Ticc:
     """
     Context manager that opens the TICC serial port and yields
-    (channel, timestamp_s) tuples as edges arrive.
+    (channel, ref_sec, ref_ps) tuples as edges arrive.
 
-    channel     : 'chA' or 'chB'
-    timestamp_s : float, seconds since TICC boot (arbitrary epoch)
+    channel : 'chA' or 'chB'
+    ref_sec : int, integer seconds since TICC boot (arbitrary epoch)
+    ref_ps  : int, picoseconds 0..999_999_999_999
+              11-digit firmware → 10 ps resolution (last digit = 0)
+              12-digit firmware →  1 ps resolution
     """
 
     def __init__(self, port: str, baud: int = 115200):
@@ -59,10 +64,12 @@ class Ticc:
             self._ser.close()
 
     def __iter__(self):
-        """Yield (channel, timestamp_s) for each valid edge line."""
+        """Yield (channel, ref_sec, ref_ps) for each valid edge line."""
         for raw in self._ser:
             line = raw.decode(errors="replace").strip()
             m = _LINE_RE.match(line)
             if not m:
                 continue
-            yield m.group(2), float(m.group(1))
+            ref_sec = int(m.group(1))
+            ref_ps  = int(m.group(2).ljust(12, '0'))   # normalise 11→12 digits
+            yield m.group(3), ref_sec, ref_ps
