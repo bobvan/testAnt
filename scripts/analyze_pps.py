@@ -104,7 +104,8 @@ def load_ticc(path: Path) -> pd.DataFrame:
     # host_timestamp → integer UTC second for UTC-join with TIM-TP.
     if "host_timestamp" in cols:
         host_ts = pd.to_datetime(df["host_timestamp"], utc=True)
-        df["host_sec"] = (host_ts.astype("int64") // 1_000_000_000).astype(int)
+        _epoch = pd.Timestamp("1970-01-01", tz="UTC")
+        df["host_sec"] = (host_ts - _epoch).dt.total_seconds().astype("int64")
 
     frac_s = df["ref_ps"] / 1e12
     bad = (frac_s < _BOUNDARY_GUARD_S) | (frac_s > 1.0 - _BOUNDARY_GUARD_S)
@@ -150,7 +151,8 @@ def load_timtp(path: Path) -> dict[str, pd.DataFrame]:
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df["tow_s"] = (df["tow_ms"] // 1000).astype(int)
     # utc_s: integer UTC second when message was logged (for UTC-second join).
-    df["utc_s"] = (df["timestamp"].astype("int64") // 1_000_000_000).astype(int)
+    _epoch = pd.Timestamp("1970-01-01", tz="UTC")
+    df["utc_s"] = (df["timestamp"] - _epoch).dt.total_seconds().astype("int64")
     return {
         rx: grp.sort_values("timestamp").reset_index(drop=True)
         for rx, grp in df.groupby("receiver")
