@@ -44,11 +44,17 @@ def load_ticc(path: Path) -> pd.DataFrame:
     """
     Load TICC CSV, pair chA/chB by integer second.
     Returns DataFrame: integer_sec, chA_ts, chB_ts, raw_diff_ns
+    Adds host_sec column (integer UTC second) when host_timestamp is present.
     """
     _BOUNDARY_GUARD_S = 100e-9
 
     df = pd.read_csv(path)
     df["integer_sec"] = df["timestamp_s"].astype(int)
+
+    if "host_timestamp" in df.columns:
+        host_ts = pd.to_datetime(df["host_timestamp"], utc=True)
+        df["host_sec"] = (host_ts.astype("int64") // 1_000_000_000).astype(int)
+
     frac = df["timestamp_s"] - df["integer_sec"]
     bad = (frac < _BOUNDARY_GUARD_S) | (frac > 1.0 - _BOUNDARY_GUARD_S)
     if bad.any():
@@ -64,6 +70,9 @@ def load_ticc(path: Path) -> pd.DataFrame:
           .reset_index(drop=True)
     )
     piv["raw_diff_ns"] = (piv["chA_ts"] - piv["chB_ts"]) * 1e9
+    if "host_sec" in df.columns:
+        hs_map = df.groupby("integer_sec")["host_sec"].first()
+        piv["host_sec"] = piv["integer_sec"].map(hs_map)
     return piv
 
 
@@ -71,18 +80,20 @@ def load_timtp(path: Path) -> dict[str, pd.DataFrame]:
     df = pd.read_csv(path, parse_dates=["timestamp"])
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df["tow_s"] = (df["tow_ms"] // 1000).astype(int)
+    df["utc_s"] = (df["timestamp"].astype("int64") // 1_000_000_000).astype(int)
     return {
         rx: grp.sort_values("timestamp").reset_index(drop=True)
         for rx, grp in df.groupby("receiver")
     }
 
 
-# ── GPS-second join (mirrors analyze_pps.py) ────────────────────────────── #
+# ── join helpers (mirrors analyze_pps.py) ────────────────────────────────── #
 
 def gps_join(ticc: pd.DataFrame,
              top_df: pd.DataFrame,
              bot_df: pd.DataFrame,
              gps_offset: int) -> pd.DataFrame:
+    """GPS-second join fallback (for TICC CSV without host_timestamp)."""
     df = ticc.copy()
     df["gps_sec"] = df["integer_sec"] + gps_offset
 
@@ -97,13 +108,45 @@ def gps_join(ticc: pd.DataFrame,
     return df.dropna(subset=["qerr_top_ps", "qerr_bot_ps"]).reset_index(drop=True)
 
 
+def utc_join(ticc: pd.DataFrame,
+             top_df: pd.DataFrame,
+             bot_df: pd.DataFrame) -> pd.DataFrame:
+    """UTC-second join when host_timestamp column is present (preferred)."""
+    df = ticc.copy()
+    top_q  = top_df.set_index("utc_s")["qerr_ps"]
+    bot_q  = bot_df.set_index("utc_s")["qerr_ps"]
+    top_ts = top_df.set_index("utc_s")["timestamp"]
+
+    corr_utc = df["host_sec"] - 1
+    df["qerr_top_ps"] = corr_utc.map(top_q)
+    df["qerr_bot_ps"] = corr_utc.map(bot_q)
+    df["utc_time"]    = corr_utc.map(top_ts)
+    return df.dropna(subset=["qerr_top_ps", "qerr_bot_ps"]).reset_index(drop=True)
+
+
 def best_gps_offset(ticc: pd.DataFrame,
                     timtp: dict[str, pd.DataFrame]) -> tuple[int, int]:
-    """Return (gps_offset, sign) that minimises corrected-diff std."""
+    """
+    Return (gps_offset, sign) that minimises corrected-diff std.
+    Uses UTC join when host_timestamp present; GPS offset search otherwise.
+    """
     top = timtp["TOP"]
     bot = timtp["BOT"]
-    naive = int(top["tow_s"].iloc[0]) - int(ticc["integer_sec"].iloc[0])
 
+    if "host_sec" in ticc.columns and "utc_s" in top.columns:
+        joined = utc_join(ticc, top, bot)
+        best_std = np.inf
+        best_sign = +1
+        for sign in (+1, -1):
+            corr = ((joined["chA_ts"] + sign * joined["qerr_top_ps"] * 1e-12) -
+                    (joined["chB_ts"] + sign * joined["qerr_bot_ps"] * 1e-12))
+            std = float(corr.std() * 1e9)
+            if std < best_std:
+                best_std = std
+                best_sign = sign
+        return 0, best_sign   # offset unused by utc_join, 0 is a sentinel
+
+    naive = int(top["tow_s"].iloc[0]) - int(ticc["integer_sec"].iloc[0])
     best_std = np.inf
     best_offset, best_sign = naive, +1
 
@@ -176,9 +219,13 @@ def main():
               f"qerr range [{grp['qerr_ps'].min():+d}, {grp['qerr_ps'].max():+d}] ps")
 
     gps_off, sign = best_gps_offset(ticc, timtp)
-    print(f"  Best alignment: gps_offset={gps_off}, sign={sign:+d}")
-
-    df = gps_join(ticc, timtp["TOP"], timtp["BOT"], gps_off)
+    use_utc = "host_sec" in ticc.columns and "utc_s" in timtp["TOP"].columns
+    if use_utc:
+        print(f"  Best alignment: UTC join, sign={sign:+d}")
+        df = utc_join(ticc, timtp["TOP"], timtp["BOT"])
+    else:
+        print(f"  Best alignment: gps_offset={gps_off}, sign={sign:+d}")
+        df = gps_join(ticc, timtp["TOP"], timtp["BOT"], gps_off)
     print(f"  {len(df)} epochs after join")
 
     # qErr smoothing (short window — shows receiver sawtooth)
