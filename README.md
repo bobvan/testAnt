@@ -1,24 +1,25 @@
 # testAnt — GNSS Antenna Test Toolkit
 
-Test and compare GNSS antennas using a pair of **u-blox F9T** timing receivers
-on a Raspberry Pi.  The primary goal is evaluating multipath rejection for
-sub-nanosecond timing applications.
+Test and compare GNSS antennas using a pair of **u-blox ZED-F9T** timing receivers
+and a **TICC** time-interval counter on a Raspberry Pi.  The primary goal is
+evaluating multipath rejection for sub-nanosecond timing applications.
 
 ## Hardware setup
 
 | Item | Detail |
 |------|--------|
-| Receivers | 2× u-blox F9T, connected via USB-serial |
-| Host | Raspberry Pi (any model with 2 USB ports) |
-| Role A | Reference antenna (stable, known-good location) |
-| Role B | Antenna under test |
+| Receivers | 2× u-blox ZED-F9T timing receivers, connected via USB-serial |
+| Counter | TICC time-interval counter (chA = TOP, chB = BOT) |
+| Host | Raspberry Pi |
+| Role A (TOP) | Reference antenna (stable, known-good location) |
+| Role B (BOT) | Antenna under test |
 
 ## Project structure
 
 ```
-config/          TOML configuration (copy receivers.toml → local.toml)
-data/            Logged CSV / UBX files (gitignored)
-scripts/         Entry-point scripts
+config/          TOML configuration (receivers.toml, run.toml)
+data/            Logged CSV files (gitignored)
+scripts/         Entry-point and analysis scripts
 src/testant/     Library code
 tests/           Unit tests
 ```
@@ -29,20 +30,41 @@ tests/           Unit tests
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Configure your serial ports
-cp config/receivers.toml config/local.toml
-$EDITOR config/local.toml   # set /dev/ttyUSB0, /dev/ttyUSB1, etc.
+# 2. Configure receivers and antennas
+#    Edit config/receivers.toml  (serial ports, baud rates)
+#    Edit config/run.toml        (which antenna is on which receiver)
+python scripts/configure_receivers.py   # factory-reset + enable TIM-TP / RAWX
 
-# 3. Log C/N0 (SNR) from both receivers
+# 3. Log everything (C/N0, RAWX, TIM-TP, TICC)
 python scripts/log_snr.py
 
-# Output: data/snr.csv with per-satellite C/N0, elevation, azimuth
+# 4. Analyze
+python scripts/analyze_snr.py  data/snr_<stem>.csv  --out data/<stem>
+python scripts/analyze_rawx.py data/rawx_<stem>.csv --out data/<stem>
+python scripts/analyze_pps.py  --ticc data/<stem>_ticc.csv \
+    --timtp data/<stem>_timtp.csv --out data/<stem>_pps
 ```
 
 ## Roadmap
 
-- [x] SNR / satellite count logging (UBX-NAV-SAT)
-- [ ] Raw carrier-phase logging (UBX-RXM-RAWX)
-- [ ] Multipath metric derivation (MP1, MP2 from dual-frequency carrier phase)
+### Signal quality
+- [x] SNR / satellite count logging (UBX-NAV-SAT and NMEA GSV)
+- [x] Raw carrier-phase logging (UBX-RXM-RAWX)
+- [x] Code-minus-carrier (CMC) multipath metric per signal
+- [x] CMC vs elevation and azimuth plots (CMC skyplot, elevation scatter)
+- [x] Carrier-phase lock duration and cycle-slip analysis
 - [ ] Live plot: C/N0 skyplot comparison A vs B
-- [ ] Automated test report generation
+- [ ] Multipath metric on a per-frequency basis (MP1, MP2 observable)
+
+### PPS timing
+- [x] TICC logging with picosecond resolution (int64 ref_sec + ref_ps)
+- [x] UBX-TIM-TP (qErr) logging from both F9T receivers
+- [x] PPS ADEV and TDEV analysis (raw and qErr-corrected, per-channel and differential)
+- [x] UTC wall-clock join (host timestamp on TIM-TP receipt → unambiguous epoch alignment)
+- [x] qErr debug export for gnuplot inspection (epoch-aligned corrected vs raw)
+- [ ] Automated test report generation (SNR + CMC + PPS in one PDF)
+
+### Infrastructure
+- [x] TOML-based run configuration (receivers.toml + run.toml)
+- [x] Receiver configuration script (factory reset, enable TIM-TP / RAWX output)
+- [x] Pre-commit hook: blocks coordinates, credentials, and accidental data-file commits
