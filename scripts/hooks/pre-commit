@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# pre-commit — guard against leaking sensitive data into testAnt (PUBLIC repo).
+#
+# Blocks commits that introduce:
+#   1. GPS/GNSS coordinates (decimal-degree lat/lon, survey/fixed-position keys)
+#   2. Passwords, secrets, API keys, tokens
+#
+# Internal hostnames and IP addresses are OK per project policy.
+# Data files (CSV, PNG, …) should be gitignored; a warning is emitted if staged.
+#
+# To skip in a genuine emergency: git commit --no-verify
+#
+# Re-install after cloning / re-cloning:
+#   bash scripts/hooks/install.sh   (from refinery/rig)
+
+set -euo pipefail
+
+FAIL=0
+
+warn() { echo "  [pre-commit] WARNING: $*" >&2; }
+fail() { echo "  [pre-commit] BLOCKED:  $*" >&2; FAIL=1; }
+
+# Staged files (added or modified, not deleted)
+staged() {
+    git diff --cached --name-only --diff-filter=ACM
+}
+
+# ── 1. Coordinate patterns ──────────────────────────────────────────────────
+
+while IFS= read -r file; do
+    [[ -f "$file" ]] || continue
+    mime=$(file -b --mime-type "$file" 2>/dev/null || echo "application/octet-stream")
+    case "$mime" in image/*|application/octet-stream) continue ;; esac
+
+    # Two decimal-degree values (≥4 decimal places) on the same added line
+    if git diff --cached -U0 -- "$file" \
+        | grep -qP '^\+.*-?\d{1,3}\.\d{4,}[^0-9.]+.{0,60}-?\d{1,3}\.\d{4,}'; then
+        fail "$file: looks like decimal-degree lat/lon on a single line"
+    fi
+
+    # GNSS survey / fixed-position configuration keys
+    if git diff --cached -U0 -- "$file" \
+        | grep -qiP '^\+.*(fixed.?pos|tpMode|tMode3?|survey.?in|ecef[XYZ]|lat\s*=\s*-?\d|lon\s*=\s*-?\d|latitude\s*=|longitude\s*=)'; then
+        fail "$file: contains a GNSS position/survey configuration key"
+    fi
+
+done < <(staged)
+
+# ── 2. Credential / secret patterns ────────────────────────────────────────
+
+while IFS= read -r file; do
+    [[ -f "$file" ]] || continue
+    mime=$(file -b --mime-type "$file" 2>/dev/null || echo "application/octet-stream")
+    case "$mime" in image/*|application/octet-stream) continue ;; esac
+
+    # Common secret key names assigned to non-empty values
+    if git diff --cached -U0 -- "$file" \
+        | grep -qiP '^\+.*(password|passwd|api[_-]?key|secret[_-]?key|auth[_-]?token|private[_-]?key|access[_-]?token)\s*[=:]\s*["\x27]?\S'; then
+        fail "$file: contains what looks like a credential or secret"
+    fi
+
+    # Well-known token prefixes
+    if git diff --cached -U0 -- "$file" \
+        | grep -qP '^\+.*(AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36,}|gho_[a-zA-Z0-9]{36,})'; then
+        fail "$file: contains what looks like a cloud/API credential token"
+    fi
+
+done < <(staged)
+
+# ── 3. Data file guard ──────────────────────────────────────────────────────
+# CSV/binary data files should be gitignored; warn if one slips through.
+
+while IFS= read -r file; do
+    case "$file" in
+        *.csv|*.png|*.jpg|*.pkl|*.npy|*.h5|data/*)
+            warn "$file: data file staged — is this intentional? (data/ should be gitignored)"
+            ;;
+    esac
+done < <(staged)
+
+# ── result ──────────────────────────────────────────────────────────────────
+
+if [[ $FAIL -ne 0 ]]; then
+    echo "" >&2
+    echo "  Commit blocked. Fix the issue above, or use --no-verify if you are" >&2
+    echo "  certain the content is safe (testAnt is PUBLIC on GitHub)." >&2
+    exit 1
+fi
+
+exit 0
