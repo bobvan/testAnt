@@ -103,14 +103,15 @@ def reader_thread(cfg: dict, logger: SnapshotLogger, rawx_logger: RawxLogger,
                         rawx_logger.write(ts, receiver, antenna_mount, meas)
                         snap = None
                     elif identity == "TIM-TP":
-                        ts = datetime.now(tz=timezone.utc)
-                        timtp_logger.write(
-                            timestamp = ts,
-                            receiver  = receiver,
-                            qerr_ps   = int(getattr(msg, "qErr",  0)),
-                            tow_ms    = int(getattr(msg, "towMS", 0)),
-                            week      = int(getattr(msg, "week",  0)),
-                        )
+                        if not getattr(msg, "qErrInvalid", 0):
+                            ts = datetime.now(tz=timezone.utc)
+                            timtp_logger.write(
+                                timestamp = ts,
+                                receiver  = receiver,
+                                qerr_ps   = int(getattr(msg, "qErr",  0)),
+                                tow_ms    = int(getattr(msg, "towMS", 0)),
+                                week      = int(getattr(msg, "week",  0)),
+                            )
                         snap = None
                     else:
                         snap = acc.feed(msg)
