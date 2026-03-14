@@ -42,3 +42,6 @@ config/run.toml
 .runtime/
 .claude/commands/
 .logs/
+
+# Gas Town (added by gt)
+.claude/
