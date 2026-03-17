@@ -27,11 +27,21 @@ this so the receiver uses GPS L1 C/A health status for L5 instead.  A NAK
 here means the key is not supported on that firmware variant and is treated as
 benign — GPS L5 simply will not be tracked.
 
+IMPORTANT — F9T initialization voodoo:
+  The L5 health override key is accepted (ACK'd) and saved to flash, but on
+  some F9T variants (confirmed on -20B with TIM 2.25) it does NOT take effect
+  in the current session.  GPS L5 signals will not appear in RXM-RAWX until
+  the receiver is restarted.  Step 5 (warm restart) ensures this.  Without it,
+  the receiver tracks GPS L1 C/A only — no L5 — despite the config being correct
+  in flash.  This cost significant debugging time.  The u-blox app note does not
+  mention the restart requirement.
+
 Steps performed on each receiver:
   1. Factory reset  — CFG-CFG (clear + save ROM defaults to flash) + CFG-RST cold start
   2. Reconnect      — wait for USB device to reappear
   3. Configure      — CFG-VALSET (layers=RAM+BBR+Flash) for signal enables
   4. GPS L5 health  — raw CFG-VALSET blob to override L5 health status (App Note UBX-21038688)
+  5. Warm restart   — CFG-RST hot start so L5 override takes effect in tracking engine
 
 Usage:
     python scripts/configure_receivers.py [--receivers config/receivers.toml]
@@ -286,7 +296,30 @@ def configure_one(label: str, port: str, baud: int) -> None:
     if not l5_ok:
         print("    (NAK — key not supported on this firmware; GPS L5 will not be tracked)")
 
-    ser.close()
+    # ── Step 5: Warm restart for L5 health override to take effect ──── #
+    # The L5 health override is saved to flash but may not take effect
+    # in the current session without a restart.  On some F9T variants
+    # (confirmed on -20B with TIM 2.25), GPS L5 is not tracked until
+    # the receiver reboots with the override in flash.
+    if l5_ok:
+        print("\n[5] Warm restart (L5 health override requires reboot)")
+        rst = UBXMessage("CFG", "CFG-RST", SET,
+            navBbrMask=0x0001,   # hot start (keep ephemeris)
+            resetMode=1,         # controlled software reset
+            reserved0=0,
+        )
+        ser.write(rst.serialize())
+        ser.close()
+        print(f"    Waiting {RESET_WAIT}s for restart...")
+        time.sleep(RESET_WAIT)
+        ser, rdr = open_port(port, baud)
+        if ser is None:
+            print("    ERROR: could not reconnect after L5 restart")
+            return
+        print("    Reconnected after L5 restart.")
+    else:
+        ser.close()
+
     print(f"\n  {'Done.' if ok else 'FAILED — check receiver.'}")
 
 

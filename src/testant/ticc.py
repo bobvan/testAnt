@@ -12,29 +12,50 @@ newer firmware uses 11 (10 ps LSB).  The counter's single-shot noise is ~60 ps,
 so the last displayed digit is noise in either case.
 Lines starting with '#' are comments (boot-time header); they are skipped.
 
-Robustness notes:
-  - After a power cycle the TICC enters a silent setup mode for ~5-10 s
-    before starting timestamp output (like a BIOS waiting for config input).
-    The port is open but produces nothing during this window — this is
-    normal.  Do not treat it as an error or retry; just wait.  Subsequent
-    opens (TICC already in timestamp mode) produce output immediately.
-  - reset_input_buffer() on open discards stale OS-buffered lines that
-    would otherwise appear as a discontinuity of several seconds.
-  - Every line is matched against _LINE_RE before parsing; partial lines,
-    corrupt fragments, and buffer artefacts are silently dropped.
+Output ordering: the TICC outputs whichever channel's timestamp is ready
+first.  When both channels fire close together (e.g. same PPS source split
+to both inputs), chB for second N may appear before chA for second N-1.
+This is documented TICC behavior, not a parsing error.
+
+Boot behavior (Arduino Mega auto-reset):
+  Opening the serial port on an Arduino Mega toggles DTR, which resets
+  the microcontroller via a hardware capacitor.  The TICC then:
+    1. Prints a config header (# lines)
+    2. Waits ~5 seconds for config menu input ("# ....")
+    3. Prints "# timestamp (seconds)"  ← sentinel
+    4. Begins outputting timestamp lines at ref_sec=1
+
+  The OS serial buffer may contain stale timestamps from before the
+  reboot.  These have large ref_sec values and different ref_ps ranges
+  from the fresh post-boot data.
+
+  Callers should either:
+    (a) Use wait_for_boot=True (default) to automatically wait for the
+        boot sentinel and discard stale data.  Takes ~10 seconds.
+    (b) Use wait_for_boot=False when the port is already open and the
+        TICC is known to be running (e.g. between calibration runs).
+
+Precision notes:
+  - Integer and fractional parts are parsed separately to avoid float64
+    precision loss.  float64 has ~15-16 significant digits total; a
+    6-digit integer part leaves only ~9 decimal digits, losing ps
+    resolution after ~28 hours of TICC uptime.
+  - ref_sec and ref_ps are returned as Python ints (arbitrary precision).
+    Convert to float only at the final analysis stage.
 """
 
 from __future__ import annotations
 
 import re
+import time as _time
 
 import serial
 
 # Integer part DOT 11-or-12 fractional digits whitespace ch followed by A or B.
-# Capture integer and fractional parts separately to avoid float64 precision loss:
-# float64 has ~15-16 significant digits total; a 6-digit integer part leaves only
-# ~9 decimal digits, losing ps resolution after ~28 hours of TICC uptime.
 _LINE_RE = re.compile(r"^(\d+)\.(\d{11,12})\s+(ch[AB])$")
+
+# Boot sentinel: the TICC prints this line just before starting timestamp output.
+_BOOT_SENTINEL = "# timestamp"
 
 
 class Ticc:
@@ -49,14 +70,53 @@ class Ticc:
               12-digit firmware →  1 ps resolution
     """
 
-    def __init__(self, port: str, baud: int = 115200):
+    def __init__(self, port: str, baud: int = 115200,
+                 wait_for_boot: bool = True):
         self.port = port
         self.baud = baud
+        self.wait_for_boot = wait_for_boot
         self._ser: serial.Serial | None = None
 
     def __enter__(self) -> "Ticc":
         self._ser = serial.Serial(self.port, self.baud, timeout=2.0)
-        self._ser.reset_input_buffer()   # discard stale buffered lines
+        self._ser.reset_input_buffer()
+
+        if self.wait_for_boot:
+            # Opening the port triggers Arduino auto-reset via DTR capacitor.
+            # The TICC reboots, prints a config header, waits ~5s for menu
+            # input, then prints "# timestamp (seconds)" and starts data.
+            # Total boot time: ~8-10 seconds.
+            #
+            # We read through the boot output until we see the sentinel line,
+            # then the first valid timestamp.  If the serial port becomes
+            # invalid during reboot (USB re-enumeration), we catch the error
+            # and retry the open.
+            deadline = _time.monotonic() + 20
+            seen_sentinel = False
+            while _time.monotonic() < deadline:
+                try:
+                    raw = self._ser.readline()
+                except (serial.SerialException, OSError):
+                    # Port became invalid during reboot — close, wait, reopen
+                    try:
+                        self._ser.close()
+                    except Exception:
+                        pass
+                    _time.sleep(1)
+                    try:
+                        self._ser = serial.Serial(self.port, self.baud,
+                                                  timeout=2.0)
+                        self._ser.reset_input_buffer()
+                    except (serial.SerialException, OSError):
+                        _time.sleep(1)
+                    continue
+                line = raw.decode(errors="replace").strip()
+                if _BOOT_SENTINEL in line:
+                    seen_sentinel = True
+                    continue
+                if seen_sentinel and _LINE_RE.match(line):
+                    break  # first fresh timestamp — ready
+
         return self
 
     def __exit__(self, *_) -> None:

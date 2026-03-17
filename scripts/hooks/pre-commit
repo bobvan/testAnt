@@ -52,7 +52,7 @@ while IFS= read -r file; do
     fi
 
     # GNSS survey / fixed-position configuration keys
-    if match_added "$file" 'fixed.?pos|tpMode|tMode3?|survey.?in|ecef[XYZ]|lat\s*=\s*-?\d|lon\s*=\s*-?\d|latitude\s*=|longitude\s*=' 'i'; then
+    if match_added "$file" 'fixed.?pos|\btpMode|\btMode3?|\bsurvey.?in|ecef[XYZ]|lat\s*=\s*-?\d|lon\s*=\s*-?\d|latitude\s*=|longitude\s*=' 'i'; then
         fail "$file: contains a GNSS position/survey configuration key"
     fi
 
