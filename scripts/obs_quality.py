@@ -79,10 +79,82 @@ PAIRS = (("GPS-L1CA", "GPS-L2W"), ("GAL-E1C", "GAL-E5aQ"))
 CN0_BINS = ((0, 38), (38, 44), (44, 50), (50, 99))
 MIN_ARC = 300          # epochs; shorter arcs give unstable RMS
 SLIP_M = 2.0           # jump in MP that means a cycle slip / new arc
+# An arc breaks on a data gap.  The threshold MUST scale with the sample
+# interval: hardcoding 5 s meant that at 30 s RINEX every epoch looked like a
+# gap and every arc was length 1, which surfaced as "no arcs long enough"
+# rather than as a wrong number -- a benign failure, but only by luck.
+GAP_FACTOR = 2.5       # a gap is > GAP_FACTOR x the median epoch interval
+
+
+# RINEX 3 observation codes -> the sig_name vocabulary used above, so RINEX
+# results are directly comparable with the RTCM/SBF paths.
+_RNX_MAP = {
+    ("G", "C1C", "L1C"): ("GPS-L1CA", 1575.42e6),
+    ("G", "C2W", "L2W"): ("GPS-L2W",  1227.60e6),
+    ("E", "C1C", "L1C"): ("GAL-E1C",  1575.42e6),
+    ("E", "C5Q", "L5Q"): ("GAL-E5aQ", 1176.45e6),
+}
+
+
+def load_rinex(path):
+    """Minimal RINEX 3 OBS reader — only the observables the MP pairs need.
+
+    Written rather than pulled in from georinex because we need four columns
+    out of a 37 MB file and not an xarray Dataset.  RINEX 3 data records are
+    F14.3 + LLI + SSI = 16 chars per observable, SV id in cols 1-3.
+    """
+    import datetime as _dt
+    obs_types, ep = {}, collections.defaultdict(lambda: collections.defaultdict(dict))
+    with open(path, "r", errors="replace") as fh:
+        sysc = None
+        for line in fh:
+            lab = line[60:].strip()
+            if lab == "SYS / # / OBS TYPES":
+                if line[0] != " ":
+                    sysc = line[0]
+                    obs_types[sysc] = []
+                obs_types[sysc] += line[7:60].split()
+            elif lab == "END OF HEADER":
+                break
+        t0 = None
+        for line in fh:
+            if line.startswith(">"):
+                f = line[1:].split()
+                if len(f) < 6:
+                    t = None; continue
+                y, mo, d, h, mi = (int(x) for x in f[:5])
+                sec = float(f[5])
+                dtv = _dt.datetime(y, mo, d, h, mi) + _dt.timedelta(seconds=sec)
+                if t0 is None:
+                    t0 = dtv
+                t = (dtv - t0).total_seconds()
+                continue
+            if t is None or len(line) < 4:
+                continue
+            sv = line[:3].strip()
+            sysc = sv[0]
+            types = obs_types.get(sysc)
+            if not types:
+                continue
+            vals = {}
+            for i, ty in enumerate(types):
+                fld = line[3 + i * 16: 3 + i * 16 + 14]
+                if fld.strip():
+                    try: vals[ty] = float(fld)
+                    except ValueError: pass
+            for (sc, ccode, lcode), (name, freq) in _RNX_MAP.items():
+                if sc != sysc:
+                    continue
+                if ccode in vals and lcode in vals:
+                    cn = vals.get("S" + ccode[1:], None)
+                    ep[t][sv][name] = (vals[ccode], vals[lcode] * C / freq, freq, cn)
+    return ep
 
 
 def load_epochs(path, limit_bytes):
     """-> {tow_s: {sv: {sig: (pr_m, cp_m, freq_hz, cno)}}}"""
+    if path.endswith((".rnx", ".obs", ".24o", ".25o", ".26o")):
+        return load_rinex(path), "RINEX 3"
     data = open(path, "rb").read(limit_bytes)
     ep = collections.defaultdict(lambda: collections.defaultdict(dict))
     if data[:1] == b"\xd3":
@@ -122,7 +194,17 @@ def _stash(ep, tow_ms, cells):
         ep[tow_ms / 1000.0][c["sv"]][c["sig_name"]] = (pr, cp * C / f, f, c.get("cno"))
 
 
-def metrics(ep, first_only=False):
+def epoch_interval(ep):
+    ts = sorted(ep)
+    if len(ts) < 3:
+        return 1.0
+    d = np.diff(np.array(ts))
+    d = d[d > 0]
+    return float(np.median(d)) if len(d) else 1.0
+
+
+def metrics(ep, first_only=False, min_arc=MIN_ARC, interval=1.0):
+    gap = max(1.5, GAP_FACTOR * interval)
     mp = collections.defaultdict(list)
     gf = collections.defaultdict(list)
     for tow in sorted(ep):
@@ -145,9 +227,9 @@ def metrics(ep, first_only=False):
         t = np.array([p[0] for p in pts])
         y = np.array([p[1] for p in pts])
         cn = np.array([(p[2] or 0) for p in pts], dtype=float)
-        brk = np.where((np.diff(t) > 5) | (np.abs(np.diff(y)) > SLIP_M))[0]
+        brk = np.where((np.diff(t) > gap) | (np.abs(np.diff(y)) > SLIP_M))[0]
         for seg in np.split(np.arange(len(y)), brk + 1):
-            if len(seg) < MIN_ARC:
+            if len(seg) < min_arc:
                 continue
             r = y[seg] - y[seg].mean()
             bysig[sig].append(np.std(r))
@@ -156,7 +238,13 @@ def metrics(ep, first_only=False):
                 if m.sum() > 60:
                     bins[(lo, hi)].append(np.std(r[m]))
 
+    # Phase noise from the 1 s scatter of the geometry-free combination only
+    # works when consecutive epochs are 1 s apart -- over 30 s the ionosphere
+    # has genuinely moved and the difference is no longer dominated by phase
+    # noise.  Report n/a rather than a number that means something else.
     scatter = []
+    if interval > 1.5:
+        return bysig, bins, float("nan"), 0
     for _key, pts in gf.items():
         t = np.array([p[0] for p in pts])
         y = np.array([p[1] for p in pts])
@@ -178,16 +266,28 @@ def main():
                          "(GPS-L1CA / GAL-E1C). The L2/E5 signals carry "
                          "markedly worse code multipath, so this choice moves "
                          "the answer -- state which you used.")
+    ap.add_argument("--min-arc", type=int, default=None,
+                    help="minimum epochs per arc (default: 5 min worth at the "
+                         "file's own sample rate, so 300 at 1 Hz and 10 at 30 s "
+                         "-- raise it for sparse data)")
+    ap.add_argument("--decimate", type=float, default=None,
+                    help="keep only epochs on this many seconds, e.g. 30 to "
+                         "compare 1 Hz data against 30 s RINEX on equal terms")
     ap.add_argument("--max-mb", type=float, default=12.0,
                     help="bytes to read; keeps a long log to a sane runtime")
     a = ap.parse_args()
     label = a.label or os.path.basename(a.path)
 
     ep, fmt = load_epochs(a.path, int(a.max_mb * 1e6))
-    bysig, bins, phase_mm, n_ph = metrics(ep, first_only=(a.signals == "l1"))
+    if a.decimate:
+        ep = {t: v for t, v in ep.items() if abs(t % a.decimate) < 1e-6}
+    iv = epoch_interval(ep)
+    min_arc = a.min_arc if a.min_arc else max(10, int(round(300 / max(iv, 1e-9))))
+    bysig, bins, phase_mm, n_ph = metrics(
+        ep, first_only=(a.signals == "l1"), min_arc=min_arc, interval=iv)
     allv = [v for vs in bysig.values() for v in vs]
 
-    print(f"== {label}   ({fmt}, {len(ep)} epochs, signals={a.signals})")
+    print(f"== {label}   ({fmt}, {len(ep)} epochs @ {iv:g}s, signals={a.signals}, min_arc={min_arc})")
     if not allv:
         print("   no dual-frequency arcs long enough — need both signals of a pair")
         return
@@ -197,7 +297,11 @@ def main():
     print(f"   {'ALL':10s} {len(allv):3d} arcs   MP RMS {np.mean(allv):.3f} m   (unweighted — see mask note)")
     print("   by C/N0:  " + "   ".join(
         f"{lo}-{hi}: {np.mean(bins[(lo,hi)]):.3f}" for lo, hi in CN0_BINS if bins.get((lo, hi))))
-    print(f"   phase noise {phase_mm:.2f} mm = {phase_mm*1e-3/C*1e12:.2f} ps   ({n_ph} arcs)")
+    if n_ph:
+        print(f"   phase noise {phase_mm:.2f} mm = {phase_mm*1e-3/C*1e12:.2f} ps   ({n_ph} arcs)")
+    else:
+        print("   phase noise n/a — needs 1 Hz epochs (the 1 s geometry-free "
+              "estimator is invalid at this rate)")
 
 
 if __name__ == "__main__":

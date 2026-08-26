@@ -271,6 +271,65 @@ plausible wrong numbers. The script locates a sibling checkout or takes
 shared ingest layer to become its own installable package when this work gets
 its own repo -- which is another argument for §0's "this outgrows the name".
 
+## 4d. RINEX ingest done — and NIST/USNO need no credentials at all
+
+The "missing fourth" ingest is implemented, and it turned out to matter more
+than expected: **the US national labs publish raw observations anonymously.**
+
+    https://igs.bkg.bund.de/root_ftp/IGS/obs/<year>/<doy>/NIST00USA_R_<...>_01D_30S_MO.crx.gz
+
+Daily 30 s multi-constellation RINEX, Hatanaka-compressed, **no login**. CDDIS
+carries the same files behind an Earthdata account; BKG does not. Verified
+present for one day: `NIST00USA`, `USN800USA` (USNO), `PTBB00DEU`, `BRUX00BEL`,
+`IENG00ITA`, `SPT000SWE`, `WAB200CHE` (METAS) — **seven national labs, no
+credentials**. That is a better panel than the authenticated caster gives, and
+it reaches back through the archive rather than only forward from now.
+
+(Credit where due: the credential-free BKG path was already written up in the
+blog's `can-i-build-my-own-link-to-utc-nist` — this work rediscovered it the
+long way round.)
+
+### The cross-check that validates the whole chain
+
+PTBB was measured **two completely independent ways**:
+
+| path | result |
+|---|---|
+| our NTRIP relay → RTCM3 MSM, 1 Hz, 15 min | 0.344 m |
+| anonymous BKG RINEX, 30 s, full day | **0.348 m** |
+
+**Agreement to 1.2 %** — different transport, different format, different
+sample rate, different window, different decoder. That validates the RINEX
+parser, the RTCM path, and the metric's insensitivity to rate and window for
+*code* multipath specifically.
+
+### The panel, extended
+
+| Station | MP all | 44–50 | ≥50 | source |
+|---|---|---|---|---|
+| IENG / INRIM | **0.164 m** | 0.090 | 0.075 | 15 min @1 Hz |
+| USN8 / USNO | 0.255 m | 0.145 | 0.127 | full day @30 s |
+| SPT0 / RISE | 0.256 m | 0.140 | 0.081 | 15 min @1 Hz |
+| NIST / NIST | 0.313 m | 0.213 | 0.180 | full day @30 s |
+| PTBB / PTB | 0.348 m | 0.254 | 0.195 | full day @30 s |
+| a lab rooftop | 0.443 m | 0.248 | 0.171 | 15 min @1 Hz |
+
+**The counterintuitive result: ranked at C/N0 ≥ 50 — the high-elevation view —
+the rooftop places 4th of 6, ahead of NIST and PTBB.** It is last only on the
+all-arcs figure.
+
+That is a genuinely useful diagnosis rather than a consolation prize. It says
+the rooftop's *zenith* view is competitive with national metrology institutes,
+and essentially all of its deficit is at **low elevation** — horizon clutter,
+which is what a rooftop in a built environment has and a properly sited geodetic
+pillar does not. It also demonstrates the §2 point about masks more sharply than
+any argument could: **the same six stations rank differently depending on which
+cut you publish**, and both rankings are true.
+
+Caveats: single days and single short windows; NIST/USN8/PTBB are full-day 30 s
+while IENG/SPT0/rooftop are 15 min at 1 Hz. PTBB appearing in both at 1.2 %
+agreement is the reason those two sets can be compared at all.
+
 ## 5. First steps, if this is ever resumed
 
 1. **Settle the naming discipline first.** `CHOKE1` / `UFO1` name *mount points*
@@ -283,8 +342,8 @@ its own repo -- which is another argument for §0's "this outgrows the name".
    combination alongside `cmc_std`, and make every reported figure carry its
    elevation mask. Keep `cmc_std` — it is the right metric for A/B — but stop it
    being mistakable for an absolute number.
-3. **Add RINEX ingest** — the public-archive corpus, and the only route to the
-   US labs (NIST, USNO). Highest value per unit effort here; see §4b.
+3. ~~Add RINEX ingest~~ **done** — see §4d. Next: pull a month rather than a
+   day, and add the remaining labs (BRUX, WAB2).
 4. **Split the report card into components + profiles**, per §3.
 5. **Only then** consider the swap experiment: it is the most expensive
    measurement here and the least useful without 1–4 in place.
