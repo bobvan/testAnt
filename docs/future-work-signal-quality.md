@@ -15,6 +15,31 @@ belonging to a repository that does not exist yet. A name should say
 
 ---
 
+## 0c. What "the test rooftop" means here — it is not a generic rooftop
+
+Every rooftop number in this document comes from **one specific installation**,
+and the comparisons are only meaningful if that is stated:
+
+- a **calibrated, survey-grade antenna** — `SFESPK6618H NONE`, with an NGS
+  absolute calibration, not a consumer patch;
+- mounted on the roof of a **single-storey suburban house** in Wheaton,
+  Illinois (41.84 N), not a purpose-built geodetic pillar;
+- with **typical suburban clutter** in the near field — an adjacent **second
+  storey** of the same house, and **trees**;
+- feeding a **Septentrio mosaic-T** inside a SparkPNT SXT-D.
+
+So it is a *good antenna in an ordinary place*, which is exactly the interesting
+case: the deficits measured here are attributable to **siting**, not to cheap
+hardware. A generic "rooftop" with a $30 patch antenna would tell you nothing —
+you could not separate the antenna from the sky it sees. That distinction is the
+whole point of §2's two scenarios, and it is why this particular installation is
+a useful specimen rather than an anecdote.
+
+The national labs it is compared against sit on engineered monuments with clear
+horizons and choke-ring antennas. **The gap is the price of a suburban roof**,
+which is a number worth having, because most people who need good GNSS have a
+suburban roof and not a monument.
+
 ## 0b. Why bother? — the case, from evidence rather than assertion
 
 Anyone finding this file is entitled to ask why signal-quality measurement
@@ -59,12 +84,19 @@ about phase noise and cycle slips and barely about code. The same station can
 fail an external grade and be entirely fit for purpose. Only a component-wise
 report can say so — hence §3's "measure components, do not bake a score".
 
-**7. The reference data is free, and better than expected.** Seven national
+**7. Proxies lie, and only the real quantity settles it.** Binned by C/N0 the
+test rooftop's deficit looked flat with elevation, which says "a mask cannot
+help". Binned by *geometric elevation* it is 1.42x overhead and 2.42x at 30-50
+degrees, which says the opposite — and locates a reflector at mid elevation that
+turned out to match the site's actual geometry. Same data, same metric,
+different x-axis, opposite engineering decision.
+
+**8. The reference data is free, and better than expected.** Seven national
 metrology institutes publish raw observations with **no credentials at all**,
 archived daily, going back years. The comparison corpus does not need to be
 built or bought.
 
-**8. It cross-validates.** PTB measured through two entirely independent paths —
+**9. It cross-validates.** PTB measured through two entirely independent paths —
 our own NTRIP relay at 1 Hz in RTCM3, and anonymous BKG RINEX at 30 s — agrees
 to **1.2 %**. When a measurement can be reproduced through unrelated transport,
 format, rate and decoder, it has stopped being a script's output and become a
@@ -254,7 +286,7 @@ BKG (see §4d), all through `scripts/obs_quality.py --signals l1`.
 | NIST | 0.431 | 0.352 | 0.213 | 0.180 | **0.320** | 0.313-0.323 |
 | PTB | 0.464 | 0.338 | 0.255 | 0.191 | **0.347** | 0.337-0.359 |
 | *lab median* | *0.403* | *0.279* | *0.144* | *0.110* | ***0.293*** | |
-| **a lab rooftop** | **0.804** | **0.442** | **0.298** | **0.191** | **0.689** | 13 h @1 Hz |
+| **the test rooftop** (see below) | **0.804** | **0.442** | **0.298** | **0.191** | **0.689** | 13 h @1 Hz |
 
 **Two things this overturns, both from the same cause.** Earlier passes used
 15 min windows and reported (a) a 2.7x spread among the labs and (b) that the
@@ -401,31 +433,55 @@ analysis can answer that — and for the rooftop measured here the answer is
 5. If the ratio is flat, the deficit is *not* elevation-selective and a mask
    buys nothing — look at the antenna or the near field instead.
 
-### What the rooftop's numbers actually say
+### What the numbers say once binned by TRUE elevation
 
-| bucket | 0-38 | 38-44 | 44-50 | >=50 |
+`obs_quality.py --nav` now computes geometric elevation from broadcast
+ephemeris and the receiver position, so the buckets are angles rather than
+signal strength. **That reverses the earlier answer**, and the reversal is the
+lesson.
+
+| MP RMS (m) | 0-15 deg | 15-30 deg | 30-50 deg | 50-91 deg |
 |---|---|---|---|---|
-| lab median | 0.403 | 0.279 | 0.144 | 0.110 |
-| rooftop | 0.804 | 0.442 | 0.298 | 0.191 |
-| **ratio** | **2.00x** | **1.58x** | **2.06x** | **1.74x** |
+| USNO | 0.370 | 0.237 | 0.152 | 0.118 |
+| INRIM | 0.388 | 0.244 | 0.119 | 0.075 |
+| NIST | 0.422 | 0.291 | 0.209 | 0.181 |
+| PTB | 0.437 | 0.310 | 0.254 | 0.217 |
+| *lab median* | *0.405* | *0.267* | *0.180* | *0.149* |
+| **test rooftop** | **0.798** | **0.602** | **0.436** | **0.213** |
+| **ratio** | **1.97x** | **2.25x** | **2.42x** | **1.42x** |
 
-**The ratio is flat.** The rooftop is ~2x worse than the lab band *at every
-signal strength, including at zenith*. If the deficit were horizon clutter the
-ratio would climb steeply toward the horizon and approach 1 overhead. It does
-not.
+Binned by **C/N0** the ratio looked flat (2.00 / 1.58 / 2.06 / 1.74) and the
+conclusion was "the deficit is not elevation-selective, so a mask cannot help".
+Binned by **elevation** it is clearly not flat: **1.42x overhead, rising to
+2.42x**. The C/N0 proxy had smeared the very structure being looked for —
+precisely the confound flagged when it was used, now confirmed rather than
+suspected.
 
-So the intuitive intervention — "rooftop, therefore raise the elevation mask" —
-would throw away geometry for essentially no noise benefit. A uniform ~2x points
-somewhere else entirely: the antenna's own multipath rejection (a
-non-choke-ring against the labs' choke rings), or near-field reflections from
-the mount and structure immediately around it, both of which degrade all
-elevations at once.
+**And the shape is not the one anyone would have guessed.** The worst band is
+not the horizon: it is **30-50 degrees** (2.42x), with 0-15 degrees at 1.97x and
+the zenith nearly clean at 1.42x. A pure horizon-clutter site would degrade
+monotonically toward the horizon. This does not.
 
-**This is the "why bother" in one example.** Without the measurement, a
-competent engineer would have reached for the mask, because the reasoning is
-sound and the conclusion is wrong. The comparison against a reference band is
-what distinguishes *my site is cluttered* from *my antenna is ordinary*, and the
-two call for completely different money.
+A mid-elevation peak is what a **reflector at moderate elevation angle** looks
+like — and §0c says exactly what is there: an adjacent **second storey** and
+**trees**, which from a single-storey roof subtend precisely those angles. The
+measurement recovered the site's geometry without being told it.
+
+### The mask answer, sharpened
+
+- **A low-elevation cutoff is the wrong instrument here.** The damage is worst
+  at 30-50 degrees, which cannot be masked without discarding most of the
+  constellation. Masking the horizon would remove the *second*-worst band and
+  leave the worst untouched.
+- **A measured weighting is the right one.** `w(el) = 1/sigma^2(el)` built from
+  this very table down-weights 30-50 degrees appropriately while keeping its
+  geometry. This is the case where the usual advice ("just raise the mask") and
+  the generic `sin^2(el)` model are *both* wrong, and only a site-specific
+  measurement finds it.
+- **Azimuth is the obvious next cut.** A second storey lies in one direction;
+  elevation-only binning averages it around the compass and so understates the
+  worst sectors. `analyze_rawx.py` already produces a CMC skyplot — the two
+  should be joined.
 
 ### For timing, prefer a weighting to a mask anyway
 
