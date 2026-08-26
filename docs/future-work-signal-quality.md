@@ -15,6 +15,65 @@ belonging to a repository that does not exist yet. A name should say
 
 ---
 
+## 0b. Why bother? — the case, from evidence rather than assertion
+
+Anyone finding this file is entitled to ask why signal-quality measurement
+deserves a repository rather than a scratch script. Everything below was
+*demonstrated* in the course of the work recorded here, not argued for.
+
+**1. A number without its mask is meaningless — and nobody publishes masks.**
+The same antenna, same data, same day measures **0.19 m or 0.80 m** depending on
+the C/N0 cut; **0.44 m or 0.69 m** depending on the window length; and different
+again depending on whether L2/E5 are included. A factor of four from itself.
+Every vendor quality figure, every datasheet multipath number, and every
+forum comparison you will ever read omits at least one of those three.
+
+**2. Short windows are biased, not merely noisy.** A 15 min window samples
+whatever sky happens to be overhead. INRIM measured 0.164 m over 15 min and
+0.278 m over a full day — not a noisy estimate of the same thing, a *different
+quantity*. Two conclusions drawn earlier in this very work were wrong for
+exactly this reason and had to be retracted. An instrument that makes this
+mistake hard to make is worth having.
+
+**3. One reference is not a scale.** Anchoring on PTB alone said a rooftop was
+near national-lab quality. Against a seven-lab band it is 2.4x the median. A
+single anchor sets a point; a panel sets a scale — and the panel turns out to be
+*tight* (1.33x across seven labs, 3-9 % month-to-month within each), which is
+what makes an outlier interpretable.
+
+**4. It separates a bad site from ordinary equipment — and those cost different
+money.** §4e: the intuitive fix for a rooftop is a higher elevation mask. The
+measured ratio against the lab band is **flat**, so the deficit is not
+elevation-selective and a mask would discard geometry for no benefit. A
+competent engineer following sound reasoning would have made the wrong change.
+
+**5. Metrics that look identical differ threefold, and the difference is
+methodological.** `cmc_std` here, the TEQC MP combination, and an external
+network's "RMS Code" are all code-minus-carrier and disagree by 3x on the same
+antenna, entirely because of what each removes. Without something that pins the
+definitions down, cross-comparison is noise dressed as measurement.
+
+**6. Third-party quality scores are weighted for someone else's problem.** An
+RTK network's score is dominated by code multipath; a carrier-phase clock cares
+about phase noise and cycle slips and barely about code. The same station can
+fail an external grade and be entirely fit for purpose. Only a component-wise
+report can say so — hence §3's "measure components, do not bake a score".
+
+**7. The reference data is free, and better than expected.** Seven national
+metrology institutes publish raw observations with **no credentials at all**,
+archived daily, going back years. The comparison corpus does not need to be
+built or bought.
+
+**8. It cross-validates.** PTB measured through two entirely independent paths —
+our own NTRIP relay at 1 Hz in RTCM3, and anonymous BKG RINEX at 30 s — agrees
+to **1.2 %**. When a measurement can be reproduced through unrelated transport,
+format, rate and decoder, it has stopped being a script's output and become a
+number.
+
+The short version: **without this, you cannot tell whether your installation is
+good, whether a vendor's figure means anything, or whether the obvious fix is
+the right one.** With it, all three are ordinary measurements.
+
 ## 1. What already exists, and what each generation could not answer
 
 Three generations of tooling, each fixing the previous one's blind spot.
@@ -181,47 +240,38 @@ Using credentials already held, `igs-ip.net` carries PTB Braunschweig
 Borås (`SPT000SWE0`) and NAOJ Mizusawa (`MIZU00JPN0`) — a *panel*, enough to
 characterise the spread at the top rather than trusting one station.
 
-**The panel has now been measured** (2026-08-26), all on a matched ~15 min
-window with the same mask (`--signals l1`, i.e. GPS-L1CA + GAL-E1C only), using
-`scripts/obs_quality.py` in this repo:
+**The panel has now been measured over a month** (2026-08-26): 7 national labs
+x 11 days sampled across 30 days, full-day 30 s RINEX pulled anonymously from
+BKG (see §4d), all through `scripts/obs_quality.py --signals l1`.
 
-| Station | Site | MP all | MP 44-50 | MP >=50 | phase |
-|---|---|---|---|---|---|
-| **IENG** / INRIM | Torino IT, 45.0 N | **0.164 m** | **0.090 m** | 0.075 m | 0.54 mm |
-| **SPT0** / RISE | Boras SE, 57.7 N | 0.256 m | 0.140 m | 0.081 m | 0.51 mm |
-| **PTBB** / PTB | Braunschweig DE, 52.3 N | 0.344 m | 0.242 m | n/a | **0.40 mm** |
-| a lab rooftop, non-choke-ring | Wheaton IL, 41.8 N | 0.443 m | 0.248 m | 0.171 m | 0.55 mm |
+| Lab | 0-38 | 38-44 | 44-50 | >=50 | **all** | month range |
+|---|---|---|---|---|---|---|
+| USNO | 0.386 | 0.272 | 0.146 | 0.124 | **0.260** | 0.254-0.269 |
+| METAS | 0.274 | n/a | n/a | n/a | **0.274** | 0.260-0.285 |
+| INRIM | 0.403 | 0.243 | 0.110 | 0.078 | **0.278** | 0.270-0.290 |
+| ORB | 0.384 | 0.239 | 0.119 | 0.084 | **0.293** | 0.286-0.307 |
+| RISE | 0.432 | 0.286 | 0.143 | 0.095 | **0.311** | 0.305-0.319 |
+| NIST | 0.431 | 0.352 | 0.213 | 0.180 | **0.320** | 0.313-0.323 |
+| PTB | 0.464 | 0.338 | 0.255 | 0.191 | **0.347** | 0.337-0.359 |
+| *lab median* | *0.403* | *0.279* | *0.144* | *0.110* | ***0.293*** | |
+| **a lab rooftop** | **0.804** | **0.442** | **0.298** | **0.191** | **0.689** | 13 h @1 Hz |
 
-**The single most important result here: there is a 2.7x spread among the
-national-lab stations themselves.**  An earlier pass used PTBB alone as *the*
-anchor and concluded the rooftop station was close to national-lab quality.
-PTBB turns out to be the *worst* of the three labs on code multipath, only 1.3x
-better than the rooftop, while INRIM is 2.7x better.
+**Two things this overturns, both from the same cause.** Earlier passes used
+15 min windows and reported (a) a 2.7x spread among the labs and (b) that the
+rooftop beat NIST and PTB at high elevation. Over full days the spread is
+**1.33x**, and the rooftop is last or tied-last on every cut.
 
-That is the case for a panel, and it is not a hypothetical: **anchoring a scale
-on one station gives a materially wrong answer.**  One anchor sets a point.
+**Short windows are biased, not merely noisy.** A 15 min window samples whatever
+slice of sky happens to be overhead; a full day samples all of it. INRIM
+measured 0.164 m over 15 min and 0.278 m over a full day — the short figure was
+not a noisy estimate of the long one, it was a different quantity. Meanwhile
+full-day figures are highly reproducible: **within-lab month-to-month scatter is
+only 3-9 %**. So the metric is stable *given a proper window*, and window length
+belongs with the other masks as something that must be declared.
 
-Two further findings, both of which are really about masks:
-
-- **Latitude does not order the results** (IENG 45.0 N best, SPT0 57.7 N, PTBB
-  52.3 N, rooftop 41.8 N worst).  The differences are siting and installation
-  quality, not geography -- which is encouraging, because it means the metric is
-  measuring the thing we want it to.
-- **Window length is a third mask.**  The metric is duration-sensitive,
-  materially so for phase: PTBB reads 0.40 mm over 15 min and 0.62 mm over an
-  hour.  An earlier unmatched comparison (1 h vs 2.4 h) reported a 1.6x phase
-  gap that is really 1.38x on matched windows.  So a figure needs its **signal
-  set**, its **C/N0 or elevation cut**, *and* its **window length** before it
-  means anything.  Three masks, each of which moves the answer.
-
-**The asymmetry is the useful result.**  On code the rooftop is last by 2.7x; on
-phase it is last by only 1.38x, and **all four stations sit comfortably inside
-onocoy's phase threshold**.  A rooftop with a non-choke-ring antenna costs a lot
-of code quality and comparatively little phase quality -- which is exactly the
-split that decides whether an antenna upgrade is an RTK purchase or a timing
-one.
-
-Caveat: single ~15 min captures.  Ordering is indicative, not settled.
+The practical consequence: the labs form a **tight calibration band**
+(0.26-0.35 m) rather than a spread. That is far more useful than a single
+anchor, and it is what makes a rooftop's 0.689 m unambiguously interpretable.
 
 The anchors also calibrate the external scale: INRIM and RISE sit *inside*
 onocoy's top-tier code threshold once a high-elevation mask is applied, which
@@ -329,6 +379,82 @@ cut you publish**, and both rankings are true.
 Caveats: single days and single short windows; NIST/USN8/PTBB are full-day 30 s
 while IENG/SPT0/rooftop are 15 min at 1 Hz. PTBB appearing in both at 1.2 %
 agreement is the reason those two sets can be compared at all.
+
+## 4e. Can this set an intelligent elevation mask? Sometimes — and here, no
+
+The obvious use for a lab-band comparison: *you are not a national lab, your
+siting is compromised, so mask the elevations where your data is bad.* The
+analysis can answer that — and for the rooftop measured here the answer is
+**no, a mask is the wrong lever**, which is a more useful result than a yes.
+
+### The method
+
+1. Measure your MP-vs-elevation curve.
+2. Measure the same curve for a clean-horizon reference. The lab band is free,
+   credential-free, and reproducible to 3-9 % month-to-month.
+3. **Take the ratio, not the difference.** The absolute curve rises toward the
+   horizon *for everyone* — that is geometry and atmosphere, not your site. What
+   is yours is the part where your curve rises **faster** than a clean site's.
+4. If the ratio grows toward the horizon, the deficit is elevation-selective:
+   horizon clutter. A mask or a down-weight is justified, and the ratio says
+   where to put it.
+5. If the ratio is flat, the deficit is *not* elevation-selective and a mask
+   buys nothing — look at the antenna or the near field instead.
+
+### What the rooftop's numbers actually say
+
+| bucket | 0-38 | 38-44 | 44-50 | >=50 |
+|---|---|---|---|---|
+| lab median | 0.403 | 0.279 | 0.144 | 0.110 |
+| rooftop | 0.804 | 0.442 | 0.298 | 0.191 |
+| **ratio** | **2.00x** | **1.58x** | **2.06x** | **1.74x** |
+
+**The ratio is flat.** The rooftop is ~2x worse than the lab band *at every
+signal strength, including at zenith*. If the deficit were horizon clutter the
+ratio would climb steeply toward the horizon and approach 1 overhead. It does
+not.
+
+So the intuitive intervention — "rooftop, therefore raise the elevation mask" —
+would throw away geometry for essentially no noise benefit. A uniform ~2x points
+somewhere else entirely: the antenna's own multipath rejection (a
+non-choke-ring against the labs' choke rings), or near-field reflections from
+the mount and structure immediately around it, both of which degrade all
+elevations at once.
+
+**This is the "why bother" in one example.** Without the measurement, a
+competent engineer would have reached for the mask, because the reasoning is
+sound and the conclusion is wrong. The comparison against a reference band is
+what distinguishes *my site is cluttered* from *my antenna is ordinary*, and the
+two call for completely different money.
+
+### For timing, prefer a weighting to a mask anyway
+
+Even when the ratio *does* climb — the case where a mask is justified — a hard
+cutoff is the crude form of the right answer. Low-elevation satellites are
+disproportionately valuable to a **clock** estimate because they decorrelate
+clock from height; masking them cleans each remaining observation while
+worsening the geometry that separates the parameter you care about. A measured
+**w(el) = 1/sigma^2(el)** from your own site keeps their geometric contribution
+and de-weights their noise correctly, and beats the generic `sin^2(el)` model
+every processing package ships with.
+
+The validation loop then closes inside this repo: derive the weighting from
+signal quality, apply it, and check the result against `adev_1s` — which
+`report_card.py` already puts on the same page as `cmc_std`.
+
+### The confound that must be fixed before trusting any of this
+
+**C/N0 is a proxy for elevation, and a biased one.** A lower-gain antenna reads
+lower C/N0 *at every elevation*, so its ">=50 dBHz" bucket contains satellites
+that a lab receiver would have placed in 44-50. That systematically mixes the
+buckets and could by itself flatten a ratio that is really elevation-selective.
+
+The flat ratio above is therefore **suggestive, not established**. Confirming it
+needs binning by **true elevation**, which is entirely available: the RINEX
+header carries `APPROX POSITION XYZ`, broadcast ephemeris sits in the same
+anonymous BKG archive, and PePPAR-Fix `scripts/broadcast_eph.py` already
+computes satellite positions. That is the single highest-value next step here —
+it turns every claim in this section from *suggestive* to *measured*.
 
 ## 5. First steps, if this is ever resumed
 
