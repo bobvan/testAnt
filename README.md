@@ -45,6 +45,19 @@ python scripts/analyze_pps.py  --ticc data/<stem>_ticc.csv \
     --timtp data/<stem>_timtp.csv --out data/<stem>_pps
 ```
 
+## Where this is heading
+
+The scope this repo was built for — comparing antennas — turned out to be one
+half of a bigger question: **absolute** signal quality of a whole equipment
+chain at a mount point, versus **relative** attribution of one component's
+contribution. Those need different instruments, and this rig is the relative
+one.
+
+Groundwork for that broader framing, including how this repo relates to
+`bobvan/f9tResearch` and to external third-party grading, is in
+[`docs/future-work-signal-quality.md`](docs/future-work-signal-quality.md).
+It notes that the broadened scope outgrows this repository's name.
+
 ## Roadmap
 
 ### Signal quality
