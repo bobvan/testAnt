@@ -170,6 +170,42 @@ piece of work rather than a rewrite. **RINEX ingest is the missing fourth** and
 would unlock every public archive as a comparison corpus — which is the cheapest
 possible route to a large scenario-1 dataset.
 
+## 4b. The scale needs a top end, and it is already reachable
+
+A quality scale is only interpretable against known-good anchors. Those exist,
+they are free, and one has already been measured.
+
+**National metrology institutes publish their IGS observations in real time.**
+Using credentials already held, `igs-ip.net` carries PTB Braunschweig
+(`PTBB00DEU0`), ORB Brussels (`BRUX00BEL0`), INRIM Torino (`IENG00ITA0`), RISE
+Borås (`SPT000SWE0`) and NAOJ Mizusawa (`MIZU00JPN0`) — a *panel*, enough to
+characterise the spread at the top rather than trusting one station.
+
+PTBB was measured 2026-08-26 with the same metric and the same signal pairs as a
+lab rooftop station: **0.363 m MP all-arcs and 0.62 mm phase noise**, against
+0.789 m and 1.00 mm for the rooftop chain — and **0.099 m at C/N0 ≥50**, which
+is *inside* onocoy's top-tier code threshold of 0.140 m. Full numbers in
+PePPAR-Fix `docs/antenna-quality-metrics-and-timing.md`.
+
+That is the anchor doing real work: it shows an external network's thresholds
+are calibrated to what a genuine geodetic installation achieves, rather than
+being arbitrary — which is what makes a score you *fail* informative instead of
+dismissible.
+
+Two cautions:
+
+- **This is squarely scenario 1** and attributes nothing. PTBB differs in
+  receiver, antenna, mount, site, installation quality *and* latitude at once.
+- **A lab's published IGS stream is not necessarily the chain its UTC(k) rides
+  on.** It may be decimated, filtered, or a different antenna entirely. Anchors
+  are anchors, not ground truth.
+
+**NIST and USNO are not on that caster** (nor NPL, OPMT, TWTF, KRISS, METAS).
+They are IGS stations, so their data exists as post-processed RINEX from CDDIS —
+which is the same **RINEX ingest** gap noted in §4. That single piece of work
+would unlock both the US labs and the entire public archive as a comparison
+corpus, and is probably the highest value-per-effort item in this document.
+
 ## 5. First steps, if this is ever resumed
 
 1. **Settle the naming discipline first.** `CHOKE1` / `UFO1` name *mount points*
@@ -182,7 +218,8 @@ possible route to a large scenario-1 dataset.
    combination alongside `cmc_std`, and make every reported figure carry its
    elevation mask. Keep `cmc_std` — it is the right metric for A/B — but stop it
    being mistakable for an absolute number.
-3. **Add RINEX ingest**, for the public-archive corpus.
+3. **Add RINEX ingest** — the public-archive corpus, and the only route to the
+   US labs (NIST, USNO). Highest value per unit effort here; see §4b.
 4. **Split the report card into components + profiles**, per §3.
 5. **Only then** consider the swap experiment: it is the most expensive
    measurement here and the least useful without 1–4 in place.
