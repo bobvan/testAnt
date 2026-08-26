@@ -512,6 +512,64 @@ anonymous BKG archive, and PePPAR-Fix `scripts/broadcast_eph.py` already
 computes satellite positions. That is the single highest-value next step here —
 it turns every claim in this section from *suggestive* to *measured*.
 
+## 4f. Locating a reflector from the data alone
+
+`scripts/sky_multipath.py` bins MP by azimuth *and* elevation. Run blind against
+the test rooftop (§0c), it recovers the site's geometry.
+
+**MP RMS by azimuth, 30-50 deg elevation, 12 sectors, ~11 h at 1 Hz:**
+
+    30- 60   0.191   0.59x
+    60- 90   0.264   0.81x
+    90-120   0.256   0.79x
+   120-150   0.320   0.99x
+   150-180   0.310   0.96x
+   180-210   0.299   0.92x
+   210-240   0.280   0.86x
+   240-270   0.267   0.82x
+   270-300   0.623   1.92x   <--
+   300-330   0.603   1.86x   <--
+   330- 30      no data (polar hole at 41.8 N — orbital, not obstruction)
+
+At 15-degree resolution the lobe is 270-315, peaking at **285-300 (2.00x)** and
+falling away on both sides. Everything else is flat at 0.19-0.37 m.
+
+**It has a top edge, which is what makes it a wall and not a ground reflection:**
+
+| elevation band | 270-300 | vs sky median |
+|---|---|---|
+| 0-20 deg | 0.732 | 1.13x — present, not dominant |
+| 20-35 deg | 0.773 | **1.84x** |
+| 30-50 deg | 0.623 | **1.92x** |
+| 50-91 deg | *no significant arcs* | **gone** |
+
+The lobe switches on near 20 deg, peaks 30-50 deg, and disappears above 50 deg.
+A ground reflection or a general poor horizon degrades monotonically toward the
+horizon; **an obstruction with a finite top edge does exactly this.**
+
+**Inference: a reflector bearing ~290 deg (WNW) from the mount points, whose top
+edge stands ~40-50 deg above the antenna** — which at 3-4 m distance puts its top
+2.5-4 m above the antenna, i.e. one storey.
+
+The site, described independently and *after* the analysis: a metal second-storey
+wall 3-4 m from the mount points. The measurement found the bearing, the
+distance-height product and the fact that it is a wall rather than clutter,
+without being told any of it.
+
+**Honest limits.** The polar hole removes 315-30 deg entirely, so the lobe's
+northern flank is unobserved; the centre estimate leans on 270-300 exceeding
+300-330 in the 20-35 deg band, which it does (1.84x vs 1.61x). Raw observation
+counts per sector are *not* usable as a blockage indicator without normalising
+for orbital density — the sky is genuinely richer to the south at this latitude.
+And the specular lobe from a broad flat surface is wide, so ~290 deg carries
+perhaps +/-15 deg.
+
+**Why this matters beyond one roof:** it converts "my site is a bit noisy" into
+"there is a reflector on this bearing, at this height, and it costs me 2x MP
+between 20 and 50 degrees". That is an actionable statement — it can be shielded,
+the antenna can be moved, or the affected sector can be down-weighted — and none
+of it required knowing anything about the site in advance.
+
 ## 5. First steps, if this is ever resumed
 
 1. **Settle the naming discipline first.** `CHOKE1` / `UFO1` name *mount points*

@@ -258,7 +258,15 @@ def elevations(nav, rx_ecef, prns, tow):
         dn = math.sqrt(sum(x * x for x in d))
         if dn <= 0:
             continue
-        out[prn] = math.degrees(math.asin(sum(d[i] * up[i] for i in range(3)) / dn))
+        el = math.degrees(math.asin(sum(d[i] * up[i] for i in range(3)) / dn))
+        # local ENU basis at the receiver -> azimuth (deg east of north)
+        lon = math.atan2(rx_ecef[1], rx_ecef[0])
+        lat = math.asin(up[2])
+        e = (-math.sin(lon) * d[0] + math.cos(lon) * d[1])
+        n = (-math.sin(lat) * math.cos(lon) * d[0]
+             - math.sin(lat) * math.sin(lon) * d[1] + math.cos(lat) * d[2])
+        az = math.degrees(math.atan2(e, n)) % 360.0
+        out[prn] = (el, az)
     return out
 
 
@@ -327,7 +335,8 @@ def metrics(ep, first_only=False, min_arc=MIN_ARC, interval=1.0, elev=None):
                     P2, L2, f2, c2 = s[s2]
                     a = (f1 / f2) ** 2
                     k = 2.0 / (a - 1.0)
-                    el = elev.get(tow, {}).get(sv) if elev else None
+                    _ea = elev.get(tow, {}).get(sv) if elev else None
+                    el = _ea[0] if _ea else None
                     mp[(sv, s1)].append((tow, P1 - (1 + k) * L1 + k * L2, c1, el))
                     if not first_only:
                         mp[(sv, s2)].append((tow, P2 - (2 * a / (a - 1)) * L1
