@@ -67,7 +67,7 @@ It notes that the broadened scope outgrows this repository's name.
 - [x] CMC vs elevation and azimuth plots (CMC skyplot, elevation scatter)
 - [x] Carrier-phase lock duration and cycle-slip analysis
 - [ ] Live plot: C/N0 skyplot comparison A vs B
-- [ ] Multipath metric on a per-frequency basis (MP1, MP2 observable)
+- [x] Multipath metric on a per-frequency basis (MP1, MP2 observable) — `scripts/obs_quality.py`, absolute and cross-station comparable
 
 ### PPS timing
 - [x] TICC logging with picosecond resolution (int64 ref_sec + ref_ps)

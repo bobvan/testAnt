@@ -181,16 +181,53 @@ Using credentials already held, `igs-ip.net` carries PTB Braunschweig
 Borås (`SPT000SWE0`) and NAOJ Mizusawa (`MIZU00JPN0`) — a *panel*, enough to
 characterise the spread at the top rather than trusting one station.
 
-PTBB was measured 2026-08-26 with the same metric and the same signal pairs as a
-lab rooftop station: **0.363 m MP all-arcs and 0.62 mm phase noise**, against
-0.789 m and 1.00 mm for the rooftop chain — and **0.099 m at C/N0 ≥50**, which
-is *inside* onocoy's top-tier code threshold of 0.140 m. Full numbers in
-PePPAR-Fix `docs/antenna-quality-metrics-and-timing.md`.
+**The panel has now been measured** (2026-08-26), all on a matched ~15 min
+window with the same mask (`--signals l1`, i.e. GPS-L1CA + GAL-E1C only), using
+`scripts/obs_quality.py` in this repo:
 
-That is the anchor doing real work: it shows an external network's thresholds
-are calibrated to what a genuine geodetic installation achieves, rather than
-being arbitrary — which is what makes a score you *fail* informative instead of
-dismissible.
+| Station | Site | MP all | MP 44-50 | MP >=50 | phase |
+|---|---|---|---|---|---|
+| **IENG** / INRIM | Torino IT, 45.0 N | **0.164 m** | **0.090 m** | 0.075 m | 0.54 mm |
+| **SPT0** / RISE | Boras SE, 57.7 N | 0.256 m | 0.140 m | 0.081 m | 0.51 mm |
+| **PTBB** / PTB | Braunschweig DE, 52.3 N | 0.344 m | 0.242 m | n/a | **0.40 mm** |
+| a lab rooftop, non-choke-ring | Wheaton IL, 41.8 N | 0.443 m | 0.248 m | 0.171 m | 0.55 mm |
+
+**The single most important result here: there is a 2.7x spread among the
+national-lab stations themselves.**  An earlier pass used PTBB alone as *the*
+anchor and concluded the rooftop station was close to national-lab quality.
+PTBB turns out to be the *worst* of the three labs on code multipath, only 1.3x
+better than the rooftop, while INRIM is 2.7x better.
+
+That is the case for a panel, and it is not a hypothetical: **anchoring a scale
+on one station gives a materially wrong answer.**  One anchor sets a point.
+
+Two further findings, both of which are really about masks:
+
+- **Latitude does not order the results** (IENG 45.0 N best, SPT0 57.7 N, PTBB
+  52.3 N, rooftop 41.8 N worst).  The differences are siting and installation
+  quality, not geography -- which is encouraging, because it means the metric is
+  measuring the thing we want it to.
+- **Window length is a third mask.**  The metric is duration-sensitive,
+  materially so for phase: PTBB reads 0.40 mm over 15 min and 0.62 mm over an
+  hour.  An earlier unmatched comparison (1 h vs 2.4 h) reported a 1.6x phase
+  gap that is really 1.38x on matched windows.  So a figure needs its **signal
+  set**, its **C/N0 or elevation cut**, *and* its **window length** before it
+  means anything.  Three masks, each of which moves the answer.
+
+**The asymmetry is the useful result.**  On code the rooftop is last by 2.7x; on
+phase it is last by only 1.38x, and **all four stations sit comfortably inside
+onocoy's phase threshold**.  A rooftop with a non-choke-ring antenna costs a lot
+of code quality and comparatively little phase quality -- which is exactly the
+split that decides whether an antenna upgrade is an RTK purchase or a timing
+one.
+
+Caveat: single ~15 min captures.  Ordering is indicative, not settled.
+
+The anchors also calibrate the external scale: INRIM and RISE sit *inside*
+onocoy's top-tier code threshold once a high-elevation mask is applied, which
+shows those thresholds track what a genuine geodetic installation achieves
+rather than being arbitrary — and that is what makes a score you *fail*
+informative instead of dismissible.
 
 Two cautions:
 
@@ -205,6 +242,34 @@ They are IGS stations, so their data exists as post-processed RINEX from CDDIS �
 which is the same **RINEX ingest** gap noted in §4. That single piece of work
 would unlock both the US labs and the entire public archive as a comparison
 corpus, and is probably the highest value-per-effort item in this document.
+
+## 4c. `scripts/obs_quality.py` — the absolute metric, implemented
+
+The scenario-1 metric from §2 now exists in this repo. It auto-detects RTCM3 MSM
+or Septentrio SBF, computes the TEQC dual-frequency MP combination (ionosphere
+cancelled exactly, only a per-arc constant removed, so the number is absolute)
+and phase noise from the 1 s scatter of the geometry-free combination.
+
+    ./scripts/obs_quality.py --label IENG --signals l1 IENG00ITA0.rtcm3
+
+It prints the C/N0 breakdown **by default rather than on request**, because the
+same antenna reads 0.443 m unweighted and 0.171 m at C/N0 >= 50 -- and
+`--signals` exists because L2W/E5aQ carry markedly worse code multipath than
+L1CA/E1C, so including them moves the answer. Both are the "publish your mask"
+rule made mechanical.
+
+`cmc_std` in `analyze_rawx.py` stays exactly as it is. It is the **scenario-2**
+metric -- correct for a simultaneous A/B where the ionosphere is common-mode --
+and the two are now clearly separated rather than one being mistaken for the
+other.
+
+**Known wart:** the decoders live in `bobvan/PePPAR-Fix`
+(`scripts/peppar_fix/{rtcm_msm_obs,sbf_obs}.py`) and are *referenced*, not
+vendored, because two copies of a bit-unpacker drift silently and hand you
+plausible wrong numbers. The script locates a sibling checkout or takes
+`PEPPAR_FIX_SCRIPTS=`. That is a real coupling and the honest fix is for the
+shared ingest layer to become its own installable package when this work gets
+its own repo -- which is another argument for §0's "this outgrows the name".
 
 ## 5. First steps, if this is ever resumed
 
