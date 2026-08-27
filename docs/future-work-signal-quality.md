@@ -621,6 +621,53 @@ wrong model. Irrelevant for elevation binning (a metre of position error changes
 elevation negligibly) but it must not be used as a surveyed truth for anything
 that cares about the vertical.
 
+## 4h. The experiment that separates receiver from antenna
+
+The §4g result — a choke-ring chain 1.63x worse at *zenith* — cannot be
+attributed, because receiver and antenna changed together. Two configurations
+separate them, and **one of them is already captured**.
+
+**UFO1 already feeds a GUS splitter chain** serving several receivers. So the
+decisive configuration is not a swap, it is **both receivers on the same antenna
+at the same instant**:
+
+| config | X20P on | mosaic-T on | isolates |
+|---|---|---|---|
+| **A** (captured 2026-08-26) | CHOKE1 | UFO1 | nothing — both differ |
+| **B** (proposed) | **UFO1, via the splitter** | UFO1 | **the receiver** — same antenna, same sky, same moment |
+| A vs B, X20P only | CHOKE1 vs UFO1 | — | **the antenna** — same receiver |
+
+Config B is strictly better than a swap for the question in hand. A swap
+separates antenna from *site* across time, and time is exactly the confound that
+made short windows misleading in §4b. Two receivers on one antenna simultaneously
+cancels sky, geometry, multipath environment and epoch *exactly* — the same
+argument that makes `testAnt`'s two-F9T rig the precision instrument in §1.
+
+And because config A is already in hand, running B yields **both** terms: B alone
+gives the receiver difference, and X20P-on-UFO1 versus X20P-on-CHOKE1 gives the
+antenna difference with the receiver held fixed.
+
+**What it would settle.** If X20P-on-UFO1 is still ~1.6x worse than the mosaic-T
+at zenith, the deficit is the **receiver**. If it converges on the mosaic-T, the
+deficit was **CHOKE1** — and an uncalibrated clone choke ring performing worse
+than a calibrated patch would be a result worth having on its own.
+
+**Practical cautions:**
+
+- **Insertion loss.** Adding a port to the splitter chain costs everyone a little
+  C/N0, including the SXT-D, which is live to two contribution networks. Measure
+  C/N0 on an existing receiver before and after; if it drops materially the
+  comparison baseline has moved.
+- **DC bias.** The antenna LNA is powered up one port. The X20P must go on a
+  DC-blocked port, or two receivers will fight over powering the LNA.
+- **Run it long.** §4b: 15 min windows are *biased*, not merely noisy. A full
+  24 h is the unit that gave 3-9 % reproducibility.
+- **Pin the signal pair.** §4g: L2W versus L2CL moves MP 11 % and phase 43 % on
+  identical hardware. The X20P emits only L2CL, so both sides must be compared on
+  `--pairs GPS-L1CA:GPS-L2CL`.
+- The SXT-D contribution can be interrupted briefly without consequence —
+  onocoy grants 300 s of downtime per day.
+
 ## 5. First steps, if this is ever resumed
 
 1. **Settle the naming discipline first.** `CHOKE1` / `UFO1` name *mount points*
