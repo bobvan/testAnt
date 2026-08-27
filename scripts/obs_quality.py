@@ -389,6 +389,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
     ap.add_argument("--label", default=None)
+    ap.add_argument("--pairs", default=None,
+                    help="override the dual-frequency pairs, e.g. "
+                         "'GPS-L1CA:GPS-L2CL'.  Comparing two receivers is only "
+                         "fair on the SAME pair: L2C and L2W are tracked "
+                         "differently, so mixing them confounds signal type "
+                         "with antenna and receiver.")
     ap.add_argument("--nav", default=None,
                     help="RINEX NAV file — enables binning by TRUE ELEVATION "
                          "instead of C/N0, which is the only way to compare two "
@@ -413,6 +419,9 @@ def main():
     a = ap.parse_args()
     label = a.label or os.path.basename(a.path)
 
+    if a.pairs:
+        global PAIRS
+        PAIRS = tuple(tuple(x.split(":")) for x in a.pairs.split(","))
     ep, fmt, rx_ecef = load_epochs(a.path, int(a.max_mb * 1e6))
     if a.rx_ecef:
         rx_ecef = tuple(float(x) for x in a.rx_ecef.replace(",", " ").split())
@@ -434,7 +443,8 @@ def main():
         ep, first_only=(a.signals == "l1"), min_arc=min_arc, interval=iv, elev=elev)
     allv = [v for vs in bysig.values() for v in vs]
 
-    print(f"== {label}   ({fmt}, {len(ep)} epochs @ {iv:g}s, signals={a.signals}, min_arc={min_arc})")
+    print(f"== {label}   ({fmt}, {len(ep)} epochs @ {iv:g}s, signals={a.signals}, "
+          f"min_arc={min_arc}, pairs={'/'.join(p[0]+'+'+p[1] for p in PAIRS)})")
     if not allv:
         print("   no dual-frequency arcs long enough — need both signals of a pair")
         return

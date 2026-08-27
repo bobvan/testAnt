@@ -570,6 +570,57 @@ between 20 and 50 degrees". That is an actionable statement — it can be shield
 the antenna can be moved, or the affected sector can be down-weighted — and none
 of it required knowing anything about the site in advance.
 
+## 4g. Two chains on one roof — a first scenario-2 measurement
+
+2026-08-26/27. A ZED-X20P on **CHOKE1** (an uncalibrated 3D stepped choke ring)
+against a Septentrio mosaic-T on **UFO1** (a calibrated `SFESPK6618H`), **0.98 m
+apart on the same roof**. Site is very nearly common, so this is much closer to
+scenario 2 than the national-lab comparisons — but receiver *and* antenna change
+together, so it still attributes nothing on its own.
+
+**The signal pair had to be matched first, and that alone moves the answer.**
+The X20P emits GPS L1CA + **L2CL** and Galileo E1 only; the mosaic-T emits both
+L2CL and L2W. Measured on the *same receiver and antenna*, merely swapping the
+second GPS signal gives:
+
+| SXT-D + UFO1 | MP all | phase |
+|---|---|---|
+| L1CA + **L2W** | 0.690 m | 0.99 mm |
+| L1CA + **L2CL** | 0.766 m | 1.42 mm |
+
+Same sky, same hardware, same day — **11 % on code and 43 % on phase, from the
+signal choice alone.** Any two-receiver comparison that does not pin the pair is
+measuring the pair.
+
+**On the matched pair (GPS L1CA + L2CL):**
+
+| | MP all | 0-15 | 15-30 | 30-50 | 50-91 | phase |
+|---|---|---|---|---|---|---|
+| SXT-D + UFO1 | 0.766 | 0.764 | 0.723 | 0.536 | **0.271** | 1.42 mm |
+| X20P + CHOKE1 | 0.809 | 0.847 | 0.869 | 0.626 | **0.441** | 1.64 mm |
+| ratio | 1.06x | 1.11x | 1.20x | 1.17x | **1.63x** | 1.15x |
+
+**The choke ring is not winning, and that is the interesting part.** A 3D choke
+ring exists to reject multipath and should show its largest advantage at *low*
+elevation. Instead the choke-ring chain is worse at every elevation, and worst
+of all **at zenith (1.63x)** — where multipath is smallest and what remains is
+mostly receiver and antenna noise rather than sky. That points at the *equipment*
+rather than the site, which is the opposite of what a choke ring is bought for.
+
+**What this cannot say.** Receiver and antenna changed together, so "the clone
+choke ring is poor" and "the X20P is noisier than the mosaic-T" are both
+consistent with these numbers and cannot be separated. Distinguishing them is
+exactly what the **swap** in §4e is for, and this is the concrete motivation for
+doing it. Other caveats: ~10 h against ~13 h on partially overlapping windows,
+one day, and the two chains have different cables and LNAs.
+
+**A note on CHOKE1's ARP**, since it is in `antennas.json` and looks
+authoritative: it is NAD83(2011) epoch 2010.0 with sigma 12.5 mm, and the OPUS
+survey that produced it used the **`SFESPK6618H` antex for a choke ring** — the
+wrong model. Irrelevant for elevation binning (a metre of position error changes
+elevation negligibly) but it must not be used as a surveyed truth for anything
+that cares about the vertical.
+
 ## 5. First steps, if this is ever resumed
 
 1. **Settle the naming discipline first.** `CHOKE1` / `UFO1` name *mount points*
