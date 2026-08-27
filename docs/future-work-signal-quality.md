@@ -570,103 +570,97 @@ between 20 and 50 degrees". That is an actionable statement — it can be shield
 the antenna can be moved, or the affected sector can be down-weighted — and none
 of it required knowing anything about the site in advance.
 
-## 4g. Two chains on one roof — a first scenario-2 measurement
+## 4g. Two RECEIVERS on one antenna — the receiver term, isolated
 
-2026-08-26/27. A ZED-X20P on **CHOKE1** (an uncalibrated 3D stepped choke ring)
-against a Septentrio mosaic-T on **UFO1** (a calibrated `SFESPK6618H`), **0.98 m
-apart on the same roof**. Site is very nearly common, so this is much closer to
-scenario 2 than the national-lab comparisons — but receiver *and* antenna change
-together, so it still attributes nothing on its own.
+**Corrected 2026-08-27.** This was first written up as X20P-on-CHOKE1 versus
+mosaic-T-on-UFO1, i.e. a confounded comparison attributing nothing. The X20P was
+in fact wired to **UFO1** throughout. So both receivers were on the **same
+antenna, the same sky, the same instants** — which is the clean configuration,
+and it isolates the **receiver**.
 
-**The signal pair had to be matched first, and that alone moves the answer.**
-The X20P emits GPS L1CA + **L2CL** and Galileo E1 only; the mosaic-T emits both
-L2CL and L2W. Measured on the *same receiver and antenna*, merely swapping the
-second GPS signal gives:
+The numbers are unaffected: the elevation binning used CHOKE1's ARP, and CHOKE1
+is 0.98 m from UFO1, which changes a satellite's elevation by ~1e-5 degrees.
+Only the *attribution* changes, and it changes for the better.
+
+**Pin the signal pair first.** The X20P emits GPS L1CA + **L2CL** and Galileo E1
+only; the mosaic-T emits both L2CL and L2W. On the *same receiver and antenna*,
+swapping the second GPS signal gives:
 
 | SXT-D + UFO1 | MP all | phase |
 |---|---|---|
 | L1CA + **L2W** | 0.690 m | 0.99 mm |
 | L1CA + **L2CL** | 0.766 m | 1.42 mm |
 
-Same sky, same hardware, same day — **11 % on code and 43 % on phase, from the
-signal choice alone.** Any two-receiver comparison that does not pin the pair is
-measuring the pair.
+**11 % on code and 43 % on phase from the signal choice alone.** Any two-receiver
+comparison that does not pin the pair is partly measuring the pair.
 
-**On the matched pair (GPS L1CA + L2CL):**
+**On the matched pair, same antenna, ~10 h overlapping:**
 
 | | MP all | 0-15 | 15-30 | 30-50 | 50-91 | phase |
 |---|---|---|---|---|---|---|
-| SXT-D + UFO1 | 0.766 | 0.764 | 0.723 | 0.536 | **0.271** | 1.42 mm |
-| X20P + CHOKE1 | 0.809 | 0.847 | 0.869 | 0.626 | **0.441** | 1.64 mm |
+| **mosaic-T** (SXT-D) | 0.766 | 0.764 | 0.723 | 0.536 | **0.271** | 1.42 mm |
+| **ZED-X20P** | 0.809 | 0.847 | 0.869 | 0.626 | **0.441** | 1.64 mm |
 | ratio | 1.06x | 1.11x | 1.20x | 1.17x | **1.63x** | 1.15x |
 
-**The choke ring is not winning, and that is the interesting part.** A 3D choke
-ring exists to reject multipath and should show its largest advantage at *low*
-elevation. Instead the choke-ring chain is worse at every elevation, and worst
-of all **at zenith (1.63x)** — where multipath is smallest and what remains is
-mostly receiver and antenna noise rather than sky. That points at the *equipment*
-rather than the site, which is the opposite of what a choke ring is bought for.
+**The elevation shape is now the interesting part, and it is self-consistent.**
+With a common antenna the *physical* multipath is identical, so any difference
+is receiver. At low elevation real multipath is large and swamps the receiver
+difference, giving a ratio near 1.1x. At zenith multipath is smallest and what
+remains is mostly receiver code-tracking noise — and there the ratio opens to
+**1.63x**. A common signal plus different receiver noise produces exactly that
+shape.
 
-**What this cannot say.** Receiver and antenna changed together, so "the clone
-choke ring is poor" and "the X20P is noisier than the mosaic-T" are both
-consistent with these numbers and cannot be separated. Distinguishing them is
-exactly what the **swap** in §4e is for, and this is the concrete motivation for
-doing it. Other caveats: ~10 h against ~13 h on partially overlapping windows,
-one day, and the two chains have different cables and LNAs.
+Read plainly: **the mosaic-T is the quieter code-tracking receiver, by about
+1.6x once multipath stops hiding the difference.** For a timing chain the phase
+figure matters more, and there the gap is smaller: 1.42 mm vs 1.64 mm, 4.7 ps vs
+5.5 ps.
 
-**A note on CHOKE1's ARP**, since it is in `antennas.json` and looks
-authoritative: it is NAD83(2011) epoch 2010.0 with sigma 12.5 mm, and the OPUS
-survey that produced it used the **`SFESPK6618H` antex for a choke ring** — the
-wrong model. Irrelevant for elevation binning (a metre of position error changes
-elevation negligibly) but it must not be used as a surveyed truth for anything
-that cares about the vertical.
+### An attempted independent check, and why it failed to settle anything
 
-## 4h. The experiment that separates receiver from antenna
+Two tests were run to confirm the shared antenna from data alone. **Both were
+inconclusive, and the reasons are worth recording** because they are traps:
 
-The §4g result — a choke-ring chain 1.63x worse at *zenith* — cannot be
-attributed, because receiver and antenna changed together. Two configurations
-separate them, and **one of them is already captured**.
+- **Multipath correlation between the two receivers.** Over 337 slip-free
+  5-minute windows the median correlation is **-0.33**, with 0 % above +0.5.
+  That looks like evidence *against* a shared antenna — but it is not, because
+  **code multipath error is a property of the RF *and the correlator***. Two
+  receivers with different correlator spacing produce different, and for some
+  reflection delays oppositely-signed, errors from *identical* incident RF.
+  Anti-correlation is therefore consistent with one antenna and two unlike
+  receivers.
+- **Splitter insertion loss.** No C/N0 step at the moment the X20P was
+  connected (-0.40 dB, inside the 39-44 dB scatter from geometry alone). Also
+  proves nothing: a power splitter's loss is fixed by its design, not by how
+  many ports happen to be loaded, so adding a receiver to an existing port
+  costs the others nothing.
 
-**UFO1 already feeds a GUS splitter chain** serving several receivers. So the
-decisive configuration is not a swap, it is **both receivers on the same antenna
-at the same instant**:
+The physical wiring is the authority here. The lesson for the future repo is
+that **"are these two receivers on the same antenna?" is not answerable from the
+observations alone** — it has to be recorded as metadata at capture time. That is
+one more argument for `report_card.py`'s separate `--antenna` / `--mount` /
+`--receiver` fields being mandatory rather than optional.
+
+## 4h. Next: move one receiver to CHOKE1 to get the antenna term
+
+With the receiver term measured on a common antenna, the missing half is the
+antenna term with the *receiver* held fixed:
 
 | config | X20P on | mosaic-T on | isolates |
 |---|---|---|---|
-| **A** (captured 2026-08-26) | CHOKE1 | UFO1 | nothing — both differ |
-| **B** (proposed) | **UFO1, via the splitter** | UFO1 | **the receiver** — same antenna, same sky, same moment |
-| A vs B, X20P only | CHOKE1 vs UFO1 | — | **the antenna** — same receiver |
+| **A** — measured 2026-08-26 | UFO1 | UFO1 | **the receiver** |
+| **B** — next | **CHOKE1** | UFO1 | **the antenna**, comparing X20P against its own config A |
 
-Config B is strictly better than a swap for the question in hand. A swap
-separates antenna from *site* across time, and time is exactly the confound that
-made short windows misleading in §4b. Two receivers on one antenna simultaneously
-cancels sky, geometry, multipath environment and epoch *exactly* — the same
-argument that makes `testAnt`'s two-F9T rig the precision instrument in §1.
+Config B also keeps a live control: the mosaic-T stays on UFO1 throughout, so
+any day-to-day change in the sky shows up in it and can be divided out.
 
-And because config A is already in hand, running B yields **both** terms: B alone
-gives the receiver difference, and X20P-on-UFO1 versus X20P-on-CHOKE1 gives the
-antenna difference with the receiver held fixed.
+**Cautions:** run 24 h (short windows are biased, §4b); pin
+`--pairs GPS-L1CA:GPS-L2CL`; and record which antenna each receiver is on **at
+capture time**, given the section above.
 
-**What it would settle.** If X20P-on-UFO1 is still ~1.6x worse than the mosaic-T
-at zenith, the deficit is the **receiver**. If it converges on the mosaic-T, the
-deficit was **CHOKE1** — and an uncalibrated clone choke ring performing worse
-than a calibrated patch would be a result worth having on its own.
-
-**Practical cautions:**
-
-- **Insertion loss.** Adding a port to the splitter chain costs everyone a little
-  C/N0, including the SXT-D, which is live to two contribution networks. Measure
-  C/N0 on an existing receiver before and after; if it drops materially the
-  comparison baseline has moved.
-- **DC bias.** The antenna LNA is powered up one port. The X20P must go on a
-  DC-blocked port, or two receivers will fight over powering the LNA.
-- **Run it long.** §4b: 15 min windows are *biased*, not merely noisy. A full
-  24 h is the unit that gave 3-9 % reproducibility.
-- **Pin the signal pair.** §4g: L2W versus L2CL moves MP 11 % and phase 43 % on
-  identical hardware. The X20P emits only L2CL, so both sides must be compared on
-  `--pairs GPS-L1CA:GPS-L2CL`.
-- The SXT-D contribution can be interrupted briefly without consequence —
-  onocoy grants 300 s of downtime per day.
+**What it would settle:** whether an uncalibrated clone 3D choke ring beats a
+calibrated `SFESPK6618H` patch on the same roof and the same receiver. Given the
+choke ring's whole purpose is multipath rejection at low elevation, the 0-15 and
+15-30 degree bins are where to look.
 
 ## 5. First steps, if this is ever resumed
 
